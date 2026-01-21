@@ -1,0 +1,35 @@
+syntax = 'proto3';
+
+package lexmodo.v1.address;
+
+option go_package = "bitbucket.org/lexmodo/proto/address";
+
+import "google/protobuf/wrappers.proto";
+
+
+message Address{
+
+    string address_id =1;
+	google.protobuf.StringValue street1 = 2;
+	google.protobuf.StringValue street2 =3;
+	google.protobuf.StringValue city = 4;
+	google.protobuf.StringValue country = 5;
+	google.protobuf.StringValue province = 6;
+	google.protobuf.StringValue zip = 7;
+	google.protobuf.StringValue phone = 8;
+	google.protobuf.StringValue full_name = 9;
+    google.protobuf.StringValue company = 10;
+    google.protobuf.StringValue email =11;
+	google.protobuf.StringValue country_code = 12;
+    google.protobuf.StringValue province_code = 13;
+    google.protobuf.StringValue first_name =14;
+    google.protobuf.StringValue last_name =15;
+    
+    enum ADDRESS_TYPE{
+        unkown =0;
+        customer =1;
+        location =2;
+        store =3;
+    }
+    ADDRESS_TYPE address_type =16;
+}

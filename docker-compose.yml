@@ -1,0 +1,52 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: lexmodo-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: lexmodo_plugin
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  lexmodo-server:
+    build: .
+    container_name: lexmodo-server
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    build:
+      context: .
+      args:
+        REPO_SSH_URL: "git@bitbucket.org:your-team/your-repo.git"
+        REPO_BRANCH: "main"
+      ssh:
+        - default
+    environment:
+      DB_USER: root
+      DB_PASS: root
+      DB_HOST: mysql:3306
+      DB_NAME: lexmodo_plugin
+      APP_CLIENT_ID: "${APP_CLIENT_ID}"
+      APP_SECRET: "${APP_SECRET}"
+      REDIRECT_URI: "http://localhost:50050/callback"
+      AUTHORIZE_URL: "https://devadmin.lexmodo.com/oauth/provider/oauth2/auth"
+      TOKEN_URL: "https://devadmin.lexmodo.com/oauth/provider/oauth2/token"
+      FEDEX_RATES_API_URL: "http://host.docker.internal:8000/api/fedex/rates"
+      FEDEX_SHIPMENTS_API_URL: "http://host.docker.internal:8000/api/fedex/shipments"
+      FEDEX_SHIPMENTS_CANCEL_API_URL: "http://host.docker.internal:8000/api/fedex/shipments/cancel"
+      PUBLIC_BASE_URL: "http://localhost:50050"
+      ORDERS_GRPC_ADDR: "host.docker.internal:7000"
+    ports:
+      - "50050:50050"
+      - "50051:50051"
+    volumes:
+      - ./files:/app/files
+      - ${SSH_KEY_PATH}:/root/.ssh/id_rsa:ro
+      - ./ssh_config:/root/.ssh/config:ro
+
+
+volumes:
+  mysql_data:

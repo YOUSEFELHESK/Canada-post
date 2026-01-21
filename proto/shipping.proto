@@ -1,0 +1,257 @@
+syntax = 'proto3';
+
+package lexmodo.v1.shipping;
+
+option go_package = "bitbucket.org/lexmodo/proto/shipping";
+
+import "google/api/annotations.proto";
+import "google/protobuf/wrappers.proto";
+import "money.proto";
+import "locations.proto";
+import "labels.proto";
+import "settings.proto";
+import "google/protobuf/empty.proto";
+
+service Shippings {
+
+    rpc CreateLabel(ShippingQuoteRequest) returns (ResultResponse){}
+
+    rpc RefundLabel(ShippingQuoteRequest) returns (ResultResponse){}
+
+    rpc CreateAdminShippingMethods(ShippingRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            post: "/admin/shiping-methods",
+            body: "*"
+        };
+    }
+
+    
+    rpc UpdateAdminShippingMethods(ShippingRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            post: "/admin/shiping-methods/{shipping_id}",
+            body: "*"
+        };
+    }   
+
+    rpc DeleteAdminShippingMethods(ShippingRequest) returns (ResultResponse){
+        option (google.api.http) = {
+            delete: "/admin/shiping-methods/{shipping_id}"
+        };   
+    }
+  
+    rpc GetAdminShippingMethods(google.protobuf.Empty) returns (ResultResponse){
+        option (google.api.http) = {
+            get: "/admin/shiping-methods"
+        };
+    }   
+
+    rpc GetAdminShippingMethodDetails(ShippingRequest) returns (ResultResponse){
+        option (google.api.http) = {
+            get: "/admin/shiping-methods/{shipping_id}"
+        };
+    } 
+
+    rpc GetCartShippingMethods(ShippingQuoteRequest) returns (ResultResponse){
+        option (google.api.http) = {
+            get: "/shiping/cart"
+        };
+    }
+
+    rpc GetShippingQuoteInfo(ShippingQuoteRequest) returns (ResultResponse){
+        option (google.api.http) = {
+            get: "/shiping/cart/quote/{shippingquoterequest_rate_id}"
+        };
+
+
+    }
+
+    rpc GetStoreShippingConfig(ShippingConfigRequest) returns (ResultResponse){
+
+        option (google.api.http) = {
+            get: "/shipping"
+        };
+
+
+    }
+
+    rpc SetStoreShippingConfig(ShippingConfigRequest) returns (ResultResponse){
+
+        option (google.api.http) = {
+            post: "/shipping",
+            body: "*"
+        };
+    }
+
+    rpc RunPlayground(ShippingTestScript) returns (ResultResponse){}
+
+}
+
+
+message ShippingTestScript{
+    string script = 1;
+    lexmodo.v1.labels.LabelRequest inpit_data = 2; 
+}
+
+enum SHIPPING_METHOD_TYPE{
+    invalid = 0;
+    store_pickup =1;
+    flat_rate=2;
+    external_rate =3;
+    table_rate =4;
+    custom=5;
+}
+
+enum WEEK_DAYS{
+
+    Sunday = 0;
+    Monday =1;
+    Tuesday =2;
+    Wednesday =3;
+    Thursday =4;
+    Friday = 5;
+    Saturday = 6;
+
+}
+
+// Substitution rules:
+// Saturdays move to Friday
+// Sundays move to Monday
+message WeekEndAlt{
+    WEEK_DAYS day = 1;
+    int32 offset =2;
+}
+
+message CustomHoliday {
+    string holiday_name =1;
+    uint32 month = 2;
+    uint32 day = 3;
+    repeated  WeekEndAlt observed = 4;
+}
+
+message ShippingBoxes{
+    string dim =1;
+    double length =2;
+    double width =3;
+    double height =4;
+    string box_label =5;
+}
+message ShippingConfigRequest{
+    
+    google.protobuf.BoolValue use_closest_distance =1;  
+    google.protobuf.UInt32Value processing_time =2;
+    google.protobuf.UInt32Value shipping_cutoff_time = 3; //Digital 11/12/14/15/
+    repeated WEEK_DAYS workdays =4;
+    repeated CustomHoliday holidays =5;
+    repeated ShippingBoxes boxes =6;
+
+}
+
+message ProductWeightRequest{
+    string product_uuid =1;
+    string variant_uuid =2 ;
+    double item_weight  =3 ;
+}
+
+message ShippingQuoteRequest {
+
+    repeated string shippingquoterequest_rate_id = 1;
+    
+
+    lexmodo.v1.labels.LabelRequest label = 2; 
+
+    string location_id = 3;
+
+    google.protobuf.StringValue shipping_id = 4;
+
+
+    ShippingQuote custom_shipping_quote = 5;
+
+
+    lexmodo.v1.settings.Timezone timezone = 6;
+}
+
+
+message ResultResponse{
+
+    bool success = 1;
+    bool failure = 2;
+    string code = 3;
+    string message = 4;
+    ShippingRequest create_shipment = 5;
+    repeated ShippingRequest shipping_info = 6;
+    repeated ShippingQuote shipping_rates = 7;
+
+    ShippingQuoteRequest ShipmentFor = 9;
+    uint32 location_based_shipment = 10;
+
+    ShippingConfigRequest store_shipping_config = 11;
+    string script_result =12;
+}
+
+message RangePrices{
+	double range_lower = 1;
+	uint32 range_price = 2;
+	bool range_percentage_based = 3;
+}
+
+message ItemsLocations{
+    lexmodo.v1.locations.Location fulfillment_location =1;
+    lexmodo.v1.labels.Parcel warehouse_parcel =2;
+}
+
+
+message ShippingQuote{
+
+	string shippingquote_code = 1;
+	string shippingquote_name = 2;
+	lexmodo.v1.money.Money shippingquote_price = 3; 
+    uint32 shippingquote_delivery_days = 5;
+    string shippingquote_delivery_date = 6;
+    bool   shippingquote_delivery_date_guaranteed = 7;
+    string shipingquote_rate_id = 8;
+    ItemsLocations shippingquote_locations =9;
+    string shipping_id =10;
+    SHIPPING_METHOD_TYPE shipping_type = 11;
+    
+}
+
+message ShippingZoneRestrictions{
+	string shippingZoneRestrictions_country_name = 1;
+	string shippingZoneRestrictions_province = 2;
+    string shippingZoneRestrictions_country_code = 3;
+    string shippingZoneRestrictions_province_code = 4;
+}
+
+message ShippingRequest{
+	
+	google.protobuf.StringValue shipping_id = 1;
+	google.protobuf.StringValue shipping_name = 2;
+	google.protobuf.StringValue shipping_code = 3;
+	google.protobuf.BoolValue shipping_status = 4;
+    enum SHIPPING_METHOD_TYPE{
+        invalid = 0;
+        store_pickup =1;
+        flat_rate=2;
+        external_rate =3;
+        table_rate =4;
+        script =5;
+    }
+	SHIPPING_METHOD_TYPE shipping_type = 5;
+	
+	enum SHIPPING_TYPE{
+        none = 0;
+        total_weight = 1;
+        sub_total = 2;
+        item_qty = 3;
+    }
+
+    SHIPPING_TYPE shipping_method_calculations_type = 7;
+    repeated RangePrices  shipping_price = 8; 
+    google.protobuf.UInt32Value shipping_handling_fee = 13;
+    repeated ShippingZoneRestrictions shipping_zone_restrictions = 14;
+    google.protobuf.UInt32Value shipping_limit = 16;
+    google.protobuf.BoolValue force_delete =17;
+    google.protobuf.StringValue script_code = 18;
+}
+
+

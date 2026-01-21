@@ -1,0 +1,28 @@
+{
+  "server": {
+    "port": "50050",
+    "grpc_addr": "0.0.0.0:50051",
+    "public_base_url": ""
+  },
+  "database": {
+    "user": "root",
+    "pass": "",
+    "host": "127.0.0.1:3306",
+    "name": "lexmodo_plugin"
+  },
+  "oauth": {
+    "app_client_id": "8e0e77e2-86d4-4e9e-a673-a23b315353e1",
+    "app_secret": "027ef85c-8fd2-4462-9a3a-ef780d3af7a6",
+    "redirect_uri": "http://localhost:50050/callback",
+    "authorize_url": "https://devadmin.lexmodo.com/oauth/provider/oauth2/auth",
+    "token_url": "https://devadmin.lexmodo.com/oauth/provider/oauth2/token"
+  },
+  "fedex": {
+    "rates_api_url": "http://localhost:8000/api/fedex/rates",
+    "shipments_api_url": "http://localhost:8000/api/fedex/shipments",
+    "shipments_cancel_api_url": "http://localhost:8000/api/fedex/shipments/cancel"
+  },
+  "orders": {
+    "grpc_addr": "192.168.1.99:7000"
+  }
+}

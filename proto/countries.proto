@@ -1,0 +1,64 @@
+syntax = 'proto3';
+
+package lexmodo.v1.countries;
+
+option go_package = "bitbucket.org/lexmodo/proto/countries";
+
+
+import "google/api/annotations.proto";
+//import "google/protobuf/empty.proto";
+
+
+service Countries {
+
+
+    rpc GetCountries(CountriesEmptyRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            get: "/countries"
+        };
+    }        
+
+    rpc GetCountry(CountryRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            get: "/country/{country_name}"
+        };
+    } 
+
+}
+
+
+message CountriesEmptyRequest{
+
+}
+
+message CountryRequest{
+  
+    string country_name =1;
+    string county_code =2;
+}
+message zone{
+
+	uint32 zone_id = 1;
+	string zone_code =2;
+	string zone_name =3;
+}
+message countries{
+	uint32 country_id = 1;
+    string country_code =2;
+	string country_name =3;
+	string zone_label = 4;
+	string zip_label = 5;
+	string group_label =6;
+	repeated zone zones =7;
+}
+
+
+message ResultResponse{
+
+    bool success = 1;
+    bool failure = 2;
+    string code = 3;
+    string message = 4;
+    repeated countries countries = 5;
+    countries country = 6;
+}

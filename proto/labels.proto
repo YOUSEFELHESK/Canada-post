@@ -1,0 +1,157 @@
+syntax = 'proto3';
+
+package lexmodo.v1.labels;
+
+option go_package = "bitbucket.org/lexmodo/proto/labels";
+
+import "google/protobuf/wrappers.proto";
+import "money.proto";
+import "address.proto";
+
+message LabelResponse{
+
+    string label_id = 1;
+    
+    string label_url =2 ;
+
+    string tacking_code =3;
+
+    string carrier =4;
+
+    string method =5;
+
+    uint32 ship_date = 6;
+
+
+    string invoice_uuid = 7;
+
+    uint64 delay_task = 8;
+}
+
+message LabelRequest{
+
+    lexmodo.v1.address.Address shipper =1;
+    lexmodo.v1.address.Address customer =2;
+
+    enum SIGNATURE{
+        NO_SIGNATURE = 0 ;
+        ADULT_SIGNATURE =1;
+        SIGNATURE_RESTRICTED =2;
+    }
+
+    SIGNATURE signature = 3;
+    string ship_date =4;
+
+    Parcel parcel = 5;
+    
+    lexmodo.v1.money.Money insurance =6;
+
+    bool is_return =7;
+
+    CustomsInfo customs_info =8;
+
+    string label_id = 9;
+
+    enum LABEL_FORMAT {
+        PNG =0;
+        PDF =1;
+        EPL2 =2;
+        ZPL=3;
+    }
+
+    LABEL_FORMAT label_format =10;
+
+    string shipping_rate_id = 11;
+
+    bool ready_to_ship = 12;
+
+    string invoice_uuid = 13;
+
+    uint64 delay_task = 14;
+}
+
+message CustomsInfo{
+
+    string eel_pfc =1;
+
+    enum  CONTENTS{
+        documents =0;
+        gift =1;
+        merchandise =2;
+        returned_goods =3;
+        sample =4;
+        contents_other =5;
+    }
+    CONTENTS contents_type =2;
+    string contents_explanation =3;
+    bool customs_certify =4;
+    string customs_signer =5; //Required if customs_certify is true
+
+    enum FAILED_DELIVERY{
+
+        return =0;
+        abandon =1;
+    }
+
+    FAILED_DELIVERY non_delivery_option =6;
+    enum RESTRICTION{
+        none = 0;
+        restriction_other =1;
+        quarantine =2;
+        sanitary_phytosanitary_inspection =3;
+    }
+    RESTRICTION restrictions = 7;
+    string restriction_comments =8; //Required if restriction_type is not "none"
+    repeated CustomItem custom_items =9;
+}
+
+message CustomItem{
+    string description =1;
+    double quantity =2;
+    lexmodo.v1.money.Money total_value =3; // in USD
+    double weight =4; //Weights are in OUNCES (OZ) and go to one decimal point
+    string hs_tariff_number =5;
+    string code =6;
+    string origin_country =7;  	//Required, 2 char country code
+}
+
+//Dimensions are in INCHES (IN) and go to one decimal point.
+message ParcelDimensions{
+    double length =1;
+    double width =2;
+    double height =3;
+}
+
+
+message Parcel{
+    string parcel_id =1;
+    ParcelDimensions parcel_dimensions =2;
+    double weight =3; //Weights are in pounds and go to one decimal point
+    repeated ItemsRequest parcel_items =4; //items in the package
+    double total_qty =5;
+    lexmodo.v1.money.Money insurance =6;
+    double free_shipping_weight = 7;
+    lexmodo.v1.money.Money free_shipping_total = 8;
+}
+
+
+
+message ItemsRequest{
+
+    string items_request_name = 1;
+    string items_request_model = 2;
+    string items_request_sku = 3;
+    string items_request_barcode = 4;
+    double items_request_quantity = 5;
+    double items_request_ounces = 6;
+    string items_request_option = 7;
+    string items_request_product_id = 8;
+    string items_request_variant_id = 9;
+    lexmodo.v1.money.Money items_request_price = 10;
+    bool items_request_taxable = 11;
+    string orders_item_id = 12;
+    lexmodo.v1.money.Money items_request_total_price =13;
+    google.protobuf.StringValue  preferred_location_id =14;
+    google.protobuf.BoolValue  force_select_preferred_location =15;
+    bool items__request_is_free_shipping =16;
+}

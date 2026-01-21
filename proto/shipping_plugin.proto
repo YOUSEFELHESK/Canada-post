@@ -1,0 +1,126 @@
+syntax = 'proto3';
+
+package lexmodo.v1.shipping_plugin;
+
+option go_package = "bitbucket.org/lexmodo/proto/shipping_plugin";
+
+/*import "google/api/annotations.proto";*/
+
+import "google/protobuf/wrappers.proto";
+
+import "labels.proto";
+
+
+service Shippings {
+
+
+    rpc ListAvailableShippingOptions(ShippingPluginReqeust) returns (ResultResponse) {}
+
+    rpc SetShippingOptions(ShippingPluginReqeust) returns (ResultResponse){}
+
+    rpc UpdateShippingOptions(ShippingPluginReqeust) returns (ResultResponse){}
+
+    rpc DeleteConfiguredShippingOptions(ShippingPluginReqeust) returns (ResultResponse){}
+
+    rpc ListConfiguredShippingOptions(ShippingPluginReqeust) returns (ResultResponse){}
+
+    rpc GetShippingRate(ShippingRateRequest) returns (ResultResponse){}
+
+    rpc CreateLabel(ShippingRateRequest) returns (ResultResponse){}
+
+    rpc RefundLabel(ShippingRateRequest) returns (ResultResponse){}
+
+
+}
+
+
+enum FIELD_TYPE{
+    unknown =0;
+    visible =1;
+    checkbox =2;
+    fake = 3;
+    password =4; 
+    masked=5;
+    invisible=6;
+    readonly=7;
+    radio = 8;
+}
+message StoreInfo {
+
+    string store_name = 1;
+    string store_url = 2;
+    string store_admin_email = 3;
+    uint64 client_id =4;
+}
+
+message Auth{
+
+    string auth_key = 1;
+    string auth_password = 2; 
+    string request_url = 3;
+    StoreInfo store_info =4;
+
+}
+
+
+message ShippingRateRequest{
+
+    lexmodo.v1.labels.LabelRequest ship_request =1;
+
+    Auth shipping_auth = 2; 
+
+    google.protobuf.StringValue shippingpluginreqeust_id = 3;
+    
+    
+}
+
+message ShippingRate{
+
+    string shippingrate_id  = 1;
+    string shippingrate_carrier_name = 2;
+    string shippingrate_service_name = 3;
+    uint32 shippingrate_price = 4;
+    uint32 shippingrate_delivery_days = 5;
+    string shippingrate_delivery_date = 6;
+    bool   shippingrate_delivery_date_guaranteed = 7;
+
+}
+
+message ResultResponse{
+
+    bool success = 1;
+    bool failure = 2;
+    string code = 3;
+    string message = 4;
+    Auth shipping_auth = 5;
+    repeated ShippingRate shipping_rates = 6;
+    repeated ShippingPluginReqeust shipping_fields = 7;
+    ShippingPluginReqeust shipping_method =8;
+    lexmodo.v1.labels.LabelResponse label =9;
+
+}
+
+
+message EmptyShippingReqeust {
+    Auth shipping_auth = 7;  
+}
+
+
+message ShippingDynamicData{
+    string field_name   = 1;
+    string field_label  = 2;
+    string field_value  = 3;
+    FIELD_TYPE field_type   = 4;
+}
+
+message ShippingPluginReqeust {
+
+    string shippingpluginreqeust_id = 1;
+    string shippingpluginreqeust_type = 2;
+    string shippingpluginreqeust_description = 3;
+    string shippingpluginreqeust_reference = 4;
+    string shippingpluginreqeust_logo = 5;
+    repeated ShippingDynamicData shippingpluginreqeust_credentials = 6;
+    Auth shipping_auth = 7;  
+    bool shippingpluginreqeust_status = 8;
+}

@@ -1,0 +1,190 @@
+syntax = 'proto3';
+
+package lexmodo.v1.carts;
+
+option go_package = "bitbucket.org/lexmodo/proto/cart";
+
+import "google/api/annotations.proto";
+import "google/protobuf/wrappers.proto";
+import "money.proto";
+import "locations.proto";
+
+service Carts {
+
+    rpc GetCustomerCartUUID(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            get: "/cart/{cartrequest_cart_uuid}/customer/{cartrequest_customer_id}"
+        };
+    }  
+
+    rpc GetCartUUID(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            get: "/cart/{cartrequest_customer_id}"
+        };
+    }   
+  
+	rpc GetCart(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            get: "/cart/customer/{cartrequest_customer_id}"
+        };
+	}
+
+
+	rpc SetCartType(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            post: "/cart/set-type/{cartrequest_cart_uuid}",
+            body: "*"
+        };
+    }
+
+    rpc DeleteFromCart(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            delete: "/cart/{cartrequest_cart_uuid}/product/{cartrequest_cart_product_uuid}/customer/{cartrequest_customer_id}"
+        };
+    }
+
+    rpc DeleteCart(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            delete: "/cart/{cartrequest_cart_uuid}/customer/{cartrequest_customer_id}"
+        };
+    }
+
+
+    rpc PurgeCustomerInfo(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            delete: "/PurgeCustomerInfo/{cartrequest_customer_id}"
+        };
+    }
+
+
+    rpc CalculatePriceNoCart(CartRequest) returns (ResultResponse){
+         option (google.api.http) = {
+                post: "/cart/calculate/item",
+               body: "*"
+        };       
+    }
+
+    rpc AddToCart(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            post: "/cart/add",
+            body: "*"
+        };
+    }
+
+    rpc UpdateCart(CartRequest) returns (ResultResponse) {
+        option (google.api.http) = {
+            post: "/cart/update",
+            body: "*"
+        };
+    }
+
+}
+
+
+enum CART_TYPE{
+    shopping_cart = 0;
+    recurring = 1;
+    save_later = 2;
+}
+message CartInfo {
+
+    string cartinfo_customer_id = 1;
+
+    string cartinfo_cart_uuid =2;
+
+    CART_TYPE cartinfo_cart_type = 3;
+    uint32 cartinfo_created_date = 4;
+    uint32 cartinfo_last_update = 5;
+    google.protobuf.StringValue cartinfo_customer_first_name =6;
+    google.protobuf.StringValue cartinfo_customer_last_name =7;
+    google.protobuf.StringValue cartinfo_customer_email = 8;
+}
+
+message ResultResponse{
+
+    bool success = 1;
+    bool failure = 2;
+    string code = 3;
+    string message = 4;
+    CartRequest Cart = 5;
+    repeated CartInfo cart_info = 6;
+    string cart_currency_code = 7;
+}
+
+message ProductCartStatus{
+
+	bool success = 1;
+    bool failure = 2;
+    bool warning = 3;
+    string code = 4;
+    string message = 5;
+
+}
+
+message BackorderInfo {
+    bool placed_on_backorder = 1;
+    double variant_qty_backorder  = 2;
+}
+
+message CustomProperties{
+    string key =1;
+    string value =2;
+}
+
+
+message CartProducts{
+
+	ProductCartStatus cartproducts_status = 1;
+	string cartproducts_product_uuid = 2;
+	string cartproducts_product_id = 3;
+    string cartproducts_variant_id = 4;	
+	string cartproducts_product_name = 5;
+    string cartproducts_product_model = 6;
+    BackorderInfo cartproducts_product_on_backorder = 7;
+    lexmodo.v1.money.Money cartproducts_variant_price = 8;
+    lexmodo.v1.money.Money cartproducts_variant_total_price = 9;
+    bool cartproducts_variant_on_sale = 10;
+    double cartproducts_sale_percentage = 11;
+    double cartproducts_variant_qty_in_cart  = 12;
+    repeated string cartproducts_product_option = 13;
+    repeated string cartproducts_variant_option_value = 14;
+    string cartproducts_product_variant_image = 15;
+    double cartproducts_variant_weight  = 16;
+    map<string,string> cartproducts_product_custom_fields = 17;
+    string cartproducts_variant_sku = 18;
+    string cartproducts_variant_barcode = 19;
+    lexmodo.v1.money.Money cartproducts_variant_original_price = 20;
+    bool cartproducts_taxable =21; 
+    lexmodo.v1.locations.Location shipping_location =22;
+    repeated CustomProperties properties =23;
+
+}
+
+
+message CartAdd{
+
+	string cartadd_product_id = 1;
+    string cartadd_variant_id = 2;
+    double cartadd_variant_add_qty  = 3;
+    string cartadd_product_uuid = 4;
+    repeated CustomProperties properties =5;
+}
+
+message CartRequest{
+
+	string cartrequest_cart_uuid = 1;
+	string cartrequest_customer_id = 2;
+	repeated CartAdd cartrequest_cart_add = 3;
+	repeated CartProducts cartrequest_products= 4;
+	lexmodo.v1.money.Money cartrequest_total_price = 5;
+	double cartrequest_total_weight = 6;
+    double cartrequest_total_qty = 7;
+	bool cartrequest_is_virtual = 8;
+
+    CART_TYPE cartrequest_cart_type = 9; 
+    string cartrequest_cart_product_uuid = 10;
+    google.protobuf.StringValue cartrequest_customer_first_name =11;
+    google.protobuf.StringValue cartrequest_customer_last_name =12;
+    google.protobuf.StringValue cartrequest_customer_email = 13;
+    bool cartrequest_create_new_cart = 14;
+}
