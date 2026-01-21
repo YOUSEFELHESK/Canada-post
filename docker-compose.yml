@@ -12,7 +12,6 @@ services:
       - mysql_data:/var/lib/mysql
 
   lexmodo-server:
-    build: .
     container_name: lexmodo-server
     restart: unless-stopped
     depends_on:
@@ -20,7 +19,7 @@ services:
     build:
       context: .
       args:
-        REPO_SSH_URL: "git@bitbucket.org:your-team/your-repo.git"
+        REPO_SSH_URL: "git@bitbucket.org:lexmodo/fedex-connector.git"
         REPO_BRANCH: "main"
       ssh:
         - default
