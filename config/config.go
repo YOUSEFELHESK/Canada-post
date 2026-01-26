@@ -71,8 +71,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", "50050")
 	v.SetDefault("server.grpc_addr", "0.0.0.0:50051")
 	v.SetDefault("server.public_base_url", "")
-	v.SetDefault("fedex.rates_api_url", "http://localhost:8000/api/fedex/rates")
-	v.SetDefault("fedex.shipments_api_url", "http://localhost:8000/api/fedex/shipments")
-	v.SetDefault("fedex.shipments_cancel_api_url", "http://localhost:8000/api/fedex/shipments/cancel")
+	v.SetDefault("fedex.rates_api_url", "http://localhost:8020/api/fedex/rates")
+	v.SetDefault("fedex.shipments_api_url", "http://localhost:8020/api/fedex/shipments")
+	v.SetDefault("fedex.shipments_cancel_api_url", "http://localhost:8020/api/fedex/shipments/cancel")
 	v.SetDefault("orders.grpc_addr", "192.168.1.99:7000")
 }

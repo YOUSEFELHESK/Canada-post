@@ -1,0 +1,14 @@
+CREATE TABLE oauth_state (
+  store_id INT PRIMARY KEY,
+  state VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY (store_id)
+);
+
+CREATE TABLE plugin_oauth (
+  client_id INT PRIMARY KEY,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expiry_date DATETIME NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

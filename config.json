@@ -18,10 +18,10 @@
     "token_url": "https://devadmin.lexmodo.com/oauth/provider/oauth2/token"
   },
   "fedex": {
-    "rates_api_url": "http://localhost:8000/api/fedex/rates",
-    "shipments_api_url": "http://localhost:8000/api/fedex/shipments",
-    "shipments_cancel_api_url": "http://localhost:8000/api/fedex/shipments/cancel"
-  },
+  "rates_api_url": "http://localhost:8020/api/fedex/rates",
+  "shipments_api_url": "http://localhost:8020/api/fedex/shipments",
+  "shipments_cancel_api_url": "http://localhost:8020/api/fedex/shipments/cancel"
+},
   "orders": {
     "grpc_addr": "192.168.1.99:7000"
   }
