@@ -17,11 +17,13 @@
     "authorize_url": "https://devadmin.lexmodo.com/oauth/provider/oauth2/auth",
     "token_url": "https://devadmin.lexmodo.com/oauth/provider/oauth2/token"
   },
-  "fedex": {
-  "rates_api_url": "http://localhost:8020/api/fedex/rates",
-  "shipments_api_url": "http://localhost:8020/api/fedex/shipments",
-  "shipments_cancel_api_url": "http://localhost:8020/api/fedex/shipments/cancel"
-},
+  "canadapost": {
+    "base_url": "https://ct.soa-gw.canadapost.ca",
+    "customer_number": "0001244782",
+    "username": "c3c2004b84fc1d24",
+    "password": "4adbd8b4926568c30ba8d2"
+  },
+
   "orders": {
     "grpc_addr": "192.168.1.99:7000"
   }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"lexmodo-plugin/config"
 
@@ -51,7 +52,7 @@ func (s *Store) ensureTables() error {
 	if err := s.ensureShippingSettingsTable(); err != nil {
 		return err
 	}
-	if err := s.ensureLabelsTable(); err != nil {
+	if err := s.ensureLabelRecordsTable(); err != nil {
 		return err
 	}
 	return nil
@@ -91,18 +92,15 @@ func (s *Store) ensureShippingSettingsTable() error {
 	return err
 }
 
-func (s *Store) ensureLabelsTable() error {
+func (s *Store) ensureLabelRecordsTable() error {
 	_, err := s.DB.Exec(`
-		CREATE TABLE IF NOT EXISTS labels (
-			id BIGINT AUTO_INCREMENT PRIMARY KEY,
-			order_id VARCHAR(255) NOT NULL,
-			invoice_uuid VARCHAR(255) NOT NULL,
-			label_id VARCHAR(255) NOT NULL,
-			rate_id VARCHAR(255) NOT NULL,
-			tracking_number VARCHAR(255) NOT NULL,
-			delivery_date VARCHAR(64) NOT NULL,
-			shipping_charges_cents BIGINT NOT NULL,
-			total_weight_lbs DOUBLE NOT NULL,
+		CREATE TABLE IF NOT EXISTS label_records (
+			id VARCHAR(64) PRIMARY KEY,
+			shipment_id VARCHAR(64) NOT NULL,
+			tracking_number VARCHAR(64) NOT NULL,
+			service_code VARCHAR(64) NOT NULL,
+			weight DOUBLE NOT NULL,
+			label_pdf LONGBLOB,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
@@ -168,30 +166,26 @@ func (s *Store) LoadLatestTrackingNumber() (string, error) {
 }
 
 type LabelRecord struct {
-	OrderID              string
-	InvoiceUUID          string
-	RateID               string
-	DeliveryDate         string
-	ShippingChargesCents int64
-	TotalWeightLbs       float64
-	TrackingNumber       string
-	LabelID              string
-	CreatedAt            string
+	ID             string
+	ShipmentID     string
+	TrackingNumber string
+	ServiceCode    string
+	Weight         float64
+	LabelPDF       []byte
+	CreatedAt      time.Time
 }
 
 func (s *Store) SaveLabelRecord(record LabelRecord) error {
 	_, err := s.DB.Exec(`
-		INSERT INTO labels (
-			order_id,
-			invoice_uuid,
-			label_id,
-			rate_id,
+		INSERT INTO label_records (
+			id,
+			shipment_id,
 			tracking_number,
-			delivery_date,
-			shipping_charges_cents,
-			total_weight_lbs
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, record.OrderID, record.InvoiceUUID, record.LabelID, record.RateID, record.TrackingNumber, record.DeliveryDate, record.ShippingChargesCents, record.TotalWeightLbs)
+			service_code,
+			weight,
+			label_pdf
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, record.ID, record.ShipmentID, record.TrackingNumber, record.ServiceCode, record.Weight, record.LabelPDF)
 	return err
 }
 
@@ -200,8 +194,8 @@ func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]L
 		limit = 10
 	}
 	query := `
-		SELECT order_id, delivery_date, shipping_charges_cents, total_weight_lbs, tracking_number, label_id, created_at
-		FROM labels
+		SELECT id, shipment_id, tracking_number, service_code, weight, created_at
+		FROM label_records
 	`
 	args := []any{}
 	clauses := []string{}
@@ -229,12 +223,11 @@ func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]L
 	for rows.Next() {
 		var rec LabelRecord
 		if err := rows.Scan(
-			&rec.OrderID,
-			&rec.DeliveryDate,
-			&rec.ShippingChargesCents,
-			&rec.TotalWeightLbs,
+			&rec.ID,
+			&rec.ShipmentID,
 			&rec.TrackingNumber,
-			&rec.LabelID,
+			&rec.ServiceCode,
+			&rec.Weight,
 			&rec.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -242,6 +235,19 @@ func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]L
 		records = append(records, rec)
 	}
 	return records, rows.Err()
+}
+
+func (s *Store) LoadLabelPDF(id string) ([]byte, error) {
+	var data []byte
+	err := s.DB.QueryRow(`
+		SELECT label_pdf
+		FROM label_records
+		WHERE id = ?
+	`, id).Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("label not found")
+	}
+	return data, err
 }
 
 type ShippingSettings struct {

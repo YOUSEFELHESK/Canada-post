@@ -1,12 +1,11 @@
 package httpapi
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"text/template"
@@ -30,50 +29,6 @@ func (a *App) callkey(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write(pubKey)
-}
-
-func (a *App) handleFedexRates(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-
-	apiURL := a.Config.FedexRatesAPIURL
-	if strings.TrimSpace(apiURL) == "" {
-		http.Error(w, "rates API URL is not configured", http.StatusInternalServerError)
-		return
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		http.Error(w, "failed to build upstream request", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, "failed to fetch rates from upstream API", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	contentType := resp.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		log.Println("failed to write upstream response:", err)
-	}
 }
 
 func (a *App) callback(w http.ResponseWriter, r *http.Request) {
@@ -211,19 +166,48 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid request", http.StatusBadRequest)
 }
 
+func (a *App) labelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	labelID := strings.TrimPrefix(r.URL.Path, "/labels/")
+	labelID = strings.TrimSpace(labelID)
+	labelID = strings.Trim(labelID, "/")
+	if labelID == "" || strings.Contains(labelID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+
+	labelID = path.Base(labelID)
+	data, err := a.Store.LoadLabelPDF(labelID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline; filename=\"label.pdf\"")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(data); err != nil {
+		log.Println("failed to write label response:", err)
+	}
+}
+
 type serviceOption struct {
 	ID    string
 	Label string
 }
 
 var serviceOptions = []serviceOption{
-	{ID: "FIRST_OVERNIGHT", Label: "FedEx First Overnight®"},
-	{ID: "PRIORITY_OVERNIGHT", Label: "FedEx Priority Overnight®"},
-	{ID: "STANDARD_OVERNIGHT", Label: "FedEx Standard Overnight®"},
-	{ID: "FEDEX_GROUND", Label: "FedEx Ground®"},
-	{ID: "FEDEX_2_DAY_AM", Label: "FedEx 2Day® AM"},
-	{ID: "FEDEX_2_DAY", Label: "FedEx 2Day®"},
-	{ID: "FEDEX_EXPRESS_SAVER", Label: "FedEx Express Saver®"},
+	{ID: "DOM.RP", Label: "Regular Parcel (Domestic)"},
+	{ID: "DOM.EP", Label: "Expedited Parcel (Domestic)"},
+	{ID: "DOM.XP", Label: "Xpresspost (Domestic)"},
+	{ID: "DOM.PC", Label: "Priority (Domestic)"},
+	{ID: "USA.EP", Label: "Expedited Parcel (USA)"},
+	{ID: "USA.XP", Label: "Xpresspost (USA)"},
+	{ID: "INT.XP", Label: "Xpresspost (International)"},
 }
 
 type settingsPageData struct {
@@ -308,11 +292,7 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func renderSettingsPage(w http.ResponseWriter, data settingsPageData) {
-	tmpl := template.Must(template.New("settings").Funcs(template.FuncMap{
-		"div100": func(value int64) float64 {
-			return float64(value) / 100
-		},
-	}).Parse(settingsHTML))
+	tmpl := template.Must(template.New("settings").Parse(settingsHTML))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.Execute(w, data); err != nil {
 		log.Println("failed to render settings:", err)
@@ -336,7 +316,7 @@ const settingsHTML = `<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>FedEx Settings</title>
+  <title>Canada Post Settings</title>
   <style>
     :root {
       --bg: #f3f5f8;
@@ -443,15 +423,15 @@ const settingsHTML = `<!doctype html>
 <body>
   <div class="wrap">
     <div class="tabs" role="tablist">
-      <button class="tab {{if eq .ActiveTab "settings"}}active{{end}}" data-target="settings-panel" type="button">FedEx Account Settings</button>
+      <button class="tab {{if eq .ActiveTab "settings"}}active{{end}}" data-target="settings-panel" type="button">Canada Post Account Settings</button>
       <button class="tab {{if eq .ActiveTab "labels"}}active{{end}}" data-target="labels-panel" type="button">Created Labels</button>
     </div>
 
     <div class="card panel {{if eq .ActiveTab "settings"}}active{{end}}" id="settings-panel">
-      <h1>FedEx Account Settings</h1>
+      <h1>Canada Post Account Settings</h1>
       <form method="post" action="/settings?client_id={{.ClientID}}">
-        <label for="account_number">FedEx Account Number</label>
-        <input id="account_number" name="account_number" type="text" value="{{.AccountNumber}}" placeholder="Enter account number" required>
+        <label for="account_number">Canada Post Customer Number</label>
+        <input id="account_number" name="account_number" type="text" value="{{.AccountNumber}}" placeholder="Enter customer number" required>
         <div class="list">
           {{range .Services}}
           <label class="row">
@@ -483,11 +463,11 @@ const settingsHTML = `<!doctype html>
         <table style="width:100%; border-collapse: collapse; font-size:14px;">
           <thead>
             <tr>
-              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Order ID</th>
-              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Delivery Date</th>
-              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Shipping Charges</th>
-              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Total Weight (lbs)</th>
+              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Shipment ID</th>
+              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Service Code</th>
+              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Weight (lbs)</th>
               <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Tracking #</th>
+              <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Created At</th>
               <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px;">Label</th>
             </tr>
           </thead>
@@ -495,13 +475,15 @@ const settingsHTML = `<!doctype html>
             {{if .Labels}}
               {{range .Labels}}
               <tr>
-                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{.OrderID}}</td>
-                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{.DeliveryDate}}</td>
-                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{printf "%.2f" (div100 .ShippingChargesCents)}}</td>
-                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{printf "%.2f" .TotalWeightLbs}}</td>
+                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{.ShipmentID}}</td>
+                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{.ServiceCode}}</td>
+                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{printf "%.2f" .Weight}}</td>
                 <td style="padding:8px; border-bottom:1px solid #f1f5f9;">{{.TrackingNumber}}</td>
                 <td style="padding:8px; border-bottom:1px solid #f1f5f9;">
-                  <a href="/files/postage_label/{{.LabelID}}.pdf" target="_blank" rel="noopener">PDF</a>
+                  {{.CreatedAt}}
+                </td>
+                <td style="padding:8px; border-bottom:1px solid #f1f5f9;">
+                  <a href="/labels/{{.ID}}" target="_blank" rel="noopener">PDF</a>
                 </td>
               </tr>
               {{end}}

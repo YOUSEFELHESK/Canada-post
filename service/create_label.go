@@ -53,7 +53,23 @@ func (s *Server) CreateLabel(
 		}, nil
 	}
 
-	labelURL, err := s.buildLabelURL(labelID, shipment)
+	labelURL := ""
+	for _, link := range shipment.Links.Link {
+		if link.Rel == "label" {
+			labelURL = link.Href
+			break
+		}
+	}
+	if labelURL == "" {
+		return &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "500",
+			Message: "label URL not found in response",
+		}, nil
+	}
+
+	labelPDF, err := s.CanadaPost.GetArtifact(ctx, labelURL)
 	if err != nil {
 		return &shippingpluginpb.ResultResponse{
 			Success: false,
@@ -63,12 +79,14 @@ func (s *Server) CreateLabel(
 		}, nil
 	}
 
+	tracking := shipment.TrackingPIN
+
 	returnData.Label = &labels.LabelResponse{
 		LabelId:     labelID,
-		LabelUrl:    labelURL,
-		TackingCode: shipment.TrackingNumber,
-		Carrier:     "FedEx",
-		Method:      camelCaseSpace(defaultValue(selectedRateID, "FIRST_OVERNIGHT")),
+		LabelUrl:    s.buildLabelURL(labelID),
+		TackingCode: tracking,
+		Carrier:     "Canada Post",
+		Method:      camelCaseSpace(defaultValue(selectedRateID, "STANDARD")),
 		ShipDate:    uint32(time.Now().Unix()),
 		InvoiceUuid: shipRequest.GetInvoiceUuid(),
 		DelayTask:   shipRequest.GetDelayTask(),
@@ -81,11 +99,11 @@ func (s *Server) CreateLabel(
 			log.Printf("✅ Stored rate %s for invoice %s\n", shipRequest.GetShippingRateId(), shipRequest.GetInvoiceUuid())
 		}
 	}
-	if shipRequest.GetInvoiceUuid() != "" && shipment.TrackingNumber != "" {
-		if err := s.Store.SaveTrackingNumber(shipRequest.GetInvoiceUuid(), shipment.TrackingNumber); err != nil {
+	if shipRequest.GetInvoiceUuid() != "" && tracking != "" {
+		if err := s.Store.SaveTrackingNumber(shipRequest.GetInvoiceUuid(), tracking); err != nil {
 			log.Println("❌ Failed to store tracking number:", err)
 		} else {
-			log.Printf("✅ Stored tracking number %s for invoice %s\n", shipment.TrackingNumber, shipRequest.GetInvoiceUuid())
+			log.Printf("✅ Stored tracking number %s for invoice %s\n", tracking, shipRequest.GetInvoiceUuid())
 		}
 	}
 
@@ -93,20 +111,18 @@ func (s *Server) CreateLabel(
 	if parcel := shipRequest.GetParcel(); parcel != nil {
 		totalWeight = float64(parcel.GetWeight())
 	}
+
 	record := database.LabelRecord{
-		OrderID:              s.resolveOrderID(ctx, shipRequest.GetInvoiceUuid()),
-		InvoiceUUID:          shipRequest.GetInvoiceUuid(),
-		RateID:               selectedRateID,
-		DeliveryDate:         shipment.DeliveryDate,
-		ShippingChargesCents: lookupRatePrice(selectedRateID),
-		TotalWeightLbs:       totalWeight,
-		TrackingNumber:       shipment.TrackingNumber,
-		LabelID:              labelID,
+		ID:             labelID,
+		ShipmentID:     shipment.ShipmentID,
+		TrackingNumber: tracking,
+		ServiceCode:    resolveServiceCode(selectedRateID),
+		Weight:         totalWeight,
+		LabelPDF:       labelPDF,
 	}
-	if record.OrderID != "" && record.TrackingNumber != "" {
-		if err := s.Store.SaveLabelRecord(record); err != nil {
-			log.Println("❌ Failed to store label record:", err)
-		}
+
+	if err := s.Store.SaveLabelRecord(record); err != nil {
+		log.Println("❌ Failed to store label record:", err)
 	}
 
 	return returnData, nil

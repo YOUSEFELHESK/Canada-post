@@ -7,7 +7,7 @@ import (
 	shippingpluginpb "bitbucket.org/lexmodo/proto/shipping_plugin"
 )
 
-// GetShippingRate returns available rates from the upstream FedEx API.
+// GetShippingRate returns available rates from the upstream Canada Post API.
 func (s *Server) GetShippingRate(
 	ctx context.Context,
 	req *shippingpluginpb.ShippingRateRequest,

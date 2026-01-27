@@ -19,7 +19,7 @@ services:
     build:
       context: .
       args:
-        REPO_SSH_URL: "git@bitbucket.org:lexmodo/fedex-connector.git"
+        REPO_SSH_URL: "${REPO_SSH_URL}"
         REPO_BRANCH: "main"
       ssh:
         - default
@@ -33,9 +33,10 @@ services:
       REDIRECT_URI: "http://localhost:50050/callback"
       AUTHORIZE_URL: "https://devadmin.lexmodo.com/oauth/provider/oauth2/auth"
       TOKEN_URL: "https://devadmin.lexmodo.com/oauth/provider/oauth2/token"
-      FEDEX_RATES_API_URL: "http://host.docker.internal:8000/api/fedex/rates"
-      FEDEX_SHIPMENTS_API_URL: "http://host.docker.internal:8000/api/fedex/shipments"
-      FEDEX_SHIPMENTS_CANCEL_API_URL: "http://host.docker.internal:8000/api/fedex/shipments/cancel"
+      CANADA_POST_USERNAME: "${CANADA_POST_USERNAME}"
+      CANADA_POST_PASSWORD: "${CANADA_POST_PASSWORD}"
+      CANADA_POST_CUSTOMER_NUMBER: "${CANADA_POST_CUSTOMER_NUMBER}"
+      CANADA_POST_BASE_URL: "https://ct.soa-gw.canadapost.ca"
       PUBLIC_BASE_URL: "http://localhost:50050"
       ORDERS_GRPC_ADDR: "host.docker.internal:7000"
     ports:
