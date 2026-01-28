@@ -16,41 +16,95 @@ type RateRequest struct {
 	} `xml:"parcel-characteristics"`
 	OriginPostalCode string `xml:"origin-postal-code"`
 	Destination      struct {
-		Domestic struct {
+		Domestic *struct {
 			PostalCode string `xml:"postal-code"`
 		} `xml:"domestic,omitempty"`
-		UnitedStates struct {
+
+		UnitedStates *struct {
 			ZipCode string `xml:"zip-code"`
 		} `xml:"united-states,omitempty"`
-		International struct {
+
+		International *struct {
 			CountryCode string `xml:"country-code"`
 		} `xml:"international,omitempty"`
 	} `xml:"destination"`
 }
 
 type RateResponse struct {
-	XMLName     xml.Name     `xml:"price-quotes"`
+	XMLName     xml.Name     `xml:"http://www.canadapost.ca/ws/ship/rate-v4 price-quotes"`
 	PriceQuotes []PriceQuote `xml:"price-quote"`
 }
 
 type PriceQuote struct {
-	ServiceCode  string `xml:"service-code"`
-	ServiceName  string `xml:"service-name"`
-	PriceDetails struct {
-		Base  float64 `xml:"base"`
-		Taxes struct {
-			GST float64 `xml:"gst"`
-			PST float64 `xml:"pst"`
-			HST float64 `xml:"hst"`
-		} `xml:"taxes"`
-		Due float64 `xml:"due"`
-	} `xml:"price-details"`
-	ServiceStandard struct {
-		AMDelivery           bool   `xml:"am-delivery"`
-		GuaranteedDelivery   bool   `xml:"guaranteed-delivery"`
-		ExpectedTransitTime  int    `xml:"expected-transit-time"`
-		ExpectedDeliveryDate string `xml:"expected-delivery-date"`
-	} `xml:"service-standard"`
+	ServiceCode    string       `xml:"service-code"`
+	ServiceName    string       `xml:"service-name"`
+	ServiceLink    ServiceLink  `xml:"service-link"`
+	PriceDetails   PriceDetails `xml:"price-details"`
+	WeightDetails  WeightDetails `xml:"weight-details"`
+	ServiceStandard ServiceStandard `xml:"service-standard"`
+}
+
+type ServiceLink struct {
+	Rel       string `xml:"rel,attr"`
+	Href      string `xml:"href,attr"`
+	MediaType string `xml:"media-type,attr"`
+}
+
+type PriceDetails struct {
+	Base       float64 `xml:"base"`
+	Due        float64 `xml:"due"`
+	Taxes      Taxes   `xml:"taxes"`
+	Options    Options `xml:"options"`
+	Adjustments Adjustments `xml:"adjustments"`
+}
+
+type Taxes struct {
+	GST Tax `xml:"gst"`
+	PST Tax `xml:"pst"`
+	HST Tax `xml:"hst"`
+}
+
+type Tax struct {
+	Value   float64 `xml:",chardata"`
+	Percent float64 `xml:"percent,attr"`
+}
+
+type Options struct {
+	Option []Option `xml:"option"`
+}
+
+type Option struct {
+	Code      string `xml:"option-code"`
+	Name      string `xml:"option-name"`
+	Price     float64 `xml:"option-price"`
+	Qualifier Qualifier `xml:"qualifier"`
+}
+
+type Qualifier struct {
+	Included bool    `xml:"included"`
+	Percent  float64 `xml:"percent,omitempty"`
+}
+
+type Adjustments struct {
+	Adjustment []Adjustment `xml:"adjustment"`
+}
+
+type Adjustment struct {
+	Code      string    `xml:"adjustment-code"`
+	Name      string    `xml:"adjustment-name"`
+	Cost      float64   `xml:"adjustment-cost"`
+	Qualifier *Qualifier `xml:"qualifier,omitempty"`
+}
+
+type WeightDetails struct {
+	// حسب الـ XML الحالي، ممكن يكون فاضي، خليها placeholder
+}
+
+type ServiceStandard struct {
+	AMDelivery          bool   `xml:"am-delivery"`
+	GuaranteedDelivery  bool   `xml:"guaranteed-delivery"`
+	ExpectedTransitTime int    `xml:"expected-transit-time"`
+	ExpectedDeliveryDate string `xml:"expected-delivery-date"`
 }
 
 type ShipmentRequest struct {
@@ -62,9 +116,9 @@ type ShipmentRequest struct {
 		ServiceCode string `xml:"service-code"`
 
 		Sender struct {
-			Name         string `xml:"name,omitempty"`
-			Company      string `xml:"company"`
-			ContactPhone string `xml:"contact-phone"`
+			Name           string `xml:"name,omitempty"`
+			Company        string `xml:"company"`
+			ContactPhone   string `xml:"contact-phone"`
 			AddressDetails struct {
 				AddressLine1 string `xml:"address-line-1"`
 				AddressLine2 string `xml:"address-line-2,omitempty"`
@@ -75,8 +129,8 @@ type ShipmentRequest struct {
 		} `xml:"sender"`
 
 		Destination struct {
-			Name    string `xml:"name"`
-			Company string `xml:"company,omitempty"`
+			Name           string `xml:"name"`
+			Company        string `xml:"company,omitempty"`
 			AddressDetails struct {
 				AddressLine1 string `xml:"address-line-1"`
 				AddressLine2 string `xml:"address-line-2,omitempty"`

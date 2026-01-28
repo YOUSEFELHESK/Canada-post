@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"lexmodo-plugin/config"
@@ -26,6 +27,7 @@ import (
 	shippingpluginpb "bitbucket.org/lexmodo/proto/shipping_plugin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -41,8 +43,8 @@ type Server struct {
 
 func NewServer(store *database.Store, cfg config.Config) *Server {
 	return &Server{
-		Store:      store,
-		Config:     cfg,
+		Store:  store,
+		Config: cfg,
 		CanadaPost: NewCanadaPostClient(
 			cfg.CanadaPost.Username,
 			cfg.CanadaPost.Password,
@@ -89,7 +91,7 @@ func StartGRPCServer(addr string, server *Server) {
 			ipresolver.StreamServerInterceptor(),
 		),
 	)
-
+	reflection.Register(grpcServer)
 	if server == nil {
 		log.Fatal("gRPC server missing dependencies")
 	}
@@ -181,7 +183,7 @@ func unwrapStringValue(value *wrapperspb.StringValue) string {
 // Address Mapping
 // ============================
 type canadaPostOrigin struct {
-	PostalCode string
+	PostalCode  string
 	AddressLine string
 	City        string
 	Province    string
@@ -280,9 +282,13 @@ func buildParcelsFromLabelRequest(parcel *labels.Parcel) (parcelMetrics, error) 
 	if parcel.GetWeight() <= 0 {
 		return parcelMetrics{}, errors.New("parcel weight is required")
 	}
-
+	// Convert ounces to kg
+	weightKg := float64(parcel.GetWeight())
 	return parcelMetrics{
-		Weight: float64(parcel.GetWeight()),
+		Weight: weightKg,
+		Length: float64(parcel.GetParcelDimensions().GetLength()),
+		Width:  float64(parcel.GetParcelDimensions().GetWidth()),
+		Height: float64(parcel.GetParcelDimensions().GetHeight()),
 	}, nil
 }
 
@@ -334,18 +340,33 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 		payload.ParcelCharacteristics.Dimensions.Width = parcel.Width
 		payload.ParcelCharacteristics.Dimensions.Height = parcel.Height
 	}
-
-	switch strings.ToUpper(strings.TrimSpace(dest.Country)) {
+	country := strings.ToUpper(strings.TrimSpace(dest.Country))
+	switch country {
 	case "CA":
-		payload.Destination.Domestic.PostalCode = dest.PostalCode
+		payload.Destination.Domestic = &struct {
+			PostalCode string `xml:"postal-code"`
+		}{
+			PostalCode: dest.PostalCode,
+		}
+
 	case "US":
-		payload.Destination.UnitedStates.ZipCode = dest.PostalCode
+		payload.Destination.UnitedStates = &struct {
+			ZipCode string `xml:"zip-code"`
+		}{
+			ZipCode: dest.PostalCode,
+		}
+
 	default:
-		payload.Destination.International.CountryCode = dest.Country
+		payload.Destination.International = &struct {
+			CountryCode string `xml:"country-code"`
+		}{
+			CountryCode: dest.Country,
+		}
 	}
 
-	body, _ := json.Marshal(payload)
-	log.Printf("canada post rates request payload: %s\n", string(body))
+	body, _ := xml.MarshalIndent(payload, "", "  ")
+
+	log.Printf("canada post rates request payload:\n%s\n", string(body))
 
 	apiRates, err := s.CanadaPost.GetRates(ctx, payload)
 	if err != nil {
@@ -452,28 +473,39 @@ func resolveServiceCode(rateID string) string {
 // Shipment
 // ============================
 func (s *Server) createShipmentFromAPI(ctx context.Context, shipRequest *labels.LabelRequest) (*ShipmentResponse, error) {
+	log.Println("🔵 createShipmentFromAPI STARTED")
+
 	if s.CanadaPost == nil {
 		return nil, errors.New("canada post client not configured")
 	}
 
+	log.Printf("🔵 Shipper: %+v\n", shipRequest.GetShipper())
+	log.Printf("🔵 Customer: %+v\n", shipRequest.GetCustomer())
 	origin := mapCanadaPostOrigin(shipRequest.GetShipper())
 	dest := mapCanadaPostDestination(shipRequest.GetCustomer())
+	log.Printf("🔵 Origin mapped: %+v\n", origin)
+	log.Printf("🔵 Destination mapped: %+v\n", dest)
 
 	// fallback to cached addresses if missing
 	if err := validateCanadaPostAddress(origin, dest); err != nil {
+		log.Printf("⚠️  Address validation failed: %v\n", err)
 		if o, d, ok := loadCanadaPostAddresses(shipRequest.GetInvoiceUuid()); ok {
+			log.Println("✅ Using cached addresses")
 			origin = o
 			dest = d
 		} else {
+			log.Println("❌ No cached addresses found")
 			return nil, err
 		}
 	}
 
 	parcel, err := buildParcelsFromLabelRequest(shipRequest.GetParcel())
 	if err != nil {
+		log.Printf("❌ Parcel build failed: %v\n", err)
 		return nil, err
 	}
 
+	log.Printf("🔵 Parcel: %+v\n", parcel)
 	payload := &ShipmentRequest{}
 	payload.RequestedShippingPoint = origin.PostalCode
 	payload.DeliverySpec.ServiceCode = resolveServiceCode(shipRequest.GetShippingRateId())

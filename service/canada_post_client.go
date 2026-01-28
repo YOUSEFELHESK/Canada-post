@@ -6,7 +6,9 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/http/httputil"
 	"time"
 )
 
@@ -42,11 +44,18 @@ func (c *CanadaPostClient) GetRates(ctx context.Context, req *RateRequest) (*Rat
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+	log.Printf("Canada Post request XML:\n%s\n", string(xmlData))
 
 	url := c.BaseURL + "/rs/ship/price"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(xmlData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	dump, err := httputil.DumpRequestOut(httpReq, true)
+	if err != nil {
+		log.Printf("Failed to dump request: %v", err)
+	} else {
+		log.Printf("Full HTTP request:\n%s\n", string(dump))
 	}
 
 	httpReq.Header.Set("Content-Type", "application/vnd.cpc.ship.rate-v4+xml")
@@ -64,10 +73,15 @@ func (c *CanadaPostClient) GetRates(ctx context.Context, req *RateRequest) (*Rat
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
 	}
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	log.Printf("Canada Post raw response:\n%s\n", string(bodyBytes))
 
 	var rateResp RateResponse
-	if err := xml.NewDecoder(resp.Body).Decode(&rateResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	if err := xml.Unmarshal(bodyBytes, &rateResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
 	return &rateResp, nil
@@ -80,12 +94,20 @@ func (c *CanadaPostClient) CreateShipment(ctx context.Context, req *ShipmentRequ
 	if req == nil {
 		return nil, fmt.Errorf("shipment request is nil")
 	}
+
+	
 	req.XMLNS = "http://www.canadapost.ca/ws/ncshipment-v4"
+
+	// === هنا نطبع الـ request قبل الـ marshal ===
+	log.Printf("ShipmentRequest RAW: %+v\n", req)
 
 	xmlData, err := xml.MarshalIndent(req, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+
+	// === هنا نطبع الـ XML النهائي قبل الإرسال ===
+	log.Println("ShipmentRequest XML to Canada Post:\n", string(xmlData))
 
 	url := fmt.Sprintf("%s/rs/%s/ncshipment", c.BaseURL, c.CustomerNumber)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(xmlData))
@@ -116,6 +138,7 @@ func (c *CanadaPostClient) CreateShipment(ctx context.Context, req *ShipmentRequ
 
 	return &shipmentResp, nil
 }
+
 
 func (c *CanadaPostClient) GetArtifact(ctx context.Context, artifactURL string) ([]byte, error) {
 	if c == nil {
