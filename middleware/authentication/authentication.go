@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"google.golang.org/grpc"
@@ -20,12 +19,6 @@ func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 		defer func() {
 			log.Println("Time took for authentication", time.Since(g))
 		}()
-
-		// ✅ Skip auth for local testing
-		if os.Getenv("SKIP_AUTH") == "true" {
-			log.Println("⚠️  AUTH SKIPPED (SKIP_AUTH=true)")
-			return handler(ctx, req)
-		}
 
 		var err error
 		ctx, err = authentication(ctx)

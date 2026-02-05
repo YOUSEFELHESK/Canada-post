@@ -52,6 +52,9 @@ func (s *Store) ensureTables() error {
 	if err := s.ensureShippingSettingsTable(); err != nil {
 		return err
 	}
+	if err := s.ensureCurrencyRatesTable(); err != nil {
+		return err
+	}
 	if err := s.ensureLabelRecordsTable(); err != nil {
 		return err
 	}
@@ -92,19 +95,99 @@ func (s *Store) ensureShippingSettingsTable() error {
 	return err
 }
 
+func (s *Store) ensureCurrencyRatesTable() error {
+	_, err := s.DB.Exec(`
+		CREATE TABLE IF NOT EXISTS currency_rates (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			client_id BIGINT NOT NULL,
+			currency_code VARCHAR(8) NOT NULL,
+			rate_to_cad DOUBLE NOT NULL,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			UNIQUE KEY uniq_currency_rate (client_id, currency_code)
+		)
+	`)
+	return err
+}
+
 func (s *Store) ensureLabelRecordsTable() error {
 	_, err := s.DB.Exec(`
 		CREATE TABLE IF NOT EXISTS label_records (
 			id VARCHAR(64) PRIMARY KEY,
 			shipment_id VARCHAR(64) NOT NULL,
 			tracking_number VARCHAR(64) NOT NULL,
+			invoice_uuid VARCHAR(255) NOT NULL DEFAULT '',
+			rate_id VARCHAR(255) NOT NULL DEFAULT '',
+			carrier VARCHAR(64) NOT NULL DEFAULT '',
 			service_code VARCHAR(64) NOT NULL,
+			service_name VARCHAR(255) NOT NULL DEFAULT '',
+			shipping_charges_cents BIGINT NOT NULL DEFAULT 0,
+			delivery_date VARCHAR(32) NOT NULL DEFAULT '',
+			delivery_days INT NOT NULL DEFAULT 0,
+			refund_link TEXT,
 			weight DOUBLE NOT NULL,
-			label_pdf LONGBLOB,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensureLabelRecordColumns()
+}
+
+func (s *Store) ensureLabelRecordColumns() error {
+	var dbName string
+	if err := s.DB.QueryRow(`SELECT DATABASE()`).Scan(&dbName); err != nil {
+		return err
+	}
+	if strings.TrimSpace(dbName) == "" {
+		return nil
+	}
+
+	rows, err := s.DB.Query(`
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = ? AND table_name = 'label_records'
+	`, dbName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		existing[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	columns := []struct {
+		name string
+		def  string
+	}{
+		{name: "invoice_uuid", def: "invoice_uuid VARCHAR(255) NOT NULL DEFAULT ''"},
+		{name: "rate_id", def: "rate_id VARCHAR(255) NOT NULL DEFAULT ''"},
+		{name: "carrier", def: "carrier VARCHAR(64) NOT NULL DEFAULT ''"},
+		{name: "service_name", def: "service_name VARCHAR(255) NOT NULL DEFAULT ''"},
+		{name: "shipping_charges_cents", def: "shipping_charges_cents BIGINT NOT NULL DEFAULT 0"},
+		{name: "delivery_date", def: "delivery_date VARCHAR(32) NOT NULL DEFAULT ''"},
+		{name: "delivery_days", def: "delivery_days INT NOT NULL DEFAULT 0"},
+		{name: "refund_link", def: "refund_link TEXT"},
+	}
+
+	for _, col := range columns {
+		if existing[col.name] {
+			continue
+		}
+		if _, err := s.DB.Exec("ALTER TABLE label_records ADD COLUMN " + col.def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) SaveChosenRateID(invoiceID string, rateID string) error {
@@ -169,9 +252,16 @@ type LabelRecord struct {
 	ID             string
 	ShipmentID     string
 	TrackingNumber string
+	InvoiceUUID    string
+	RateID         string
+	Carrier        string
 	ServiceCode    string
+	ServiceName    string
+	ShippingChargesCents int64
+	DeliveryDate   string
+	DeliveryDays   int
+	RefundLink     string
 	Weight         float64
-	LabelPDF       []byte
 	CreatedAt      time.Time
 }
 
@@ -181,24 +271,40 @@ func (s *Store) SaveLabelRecord(record LabelRecord) error {
 			id,
 			shipment_id,
 			tracking_number,
+			invoice_uuid,
+			rate_id,
+			carrier,
 			service_code,
-			weight,
-			label_pdf
-		) VALUES (?, ?, ?, ?, ?, ?)
-	`, record.ID, record.ShipmentID, record.TrackingNumber, record.ServiceCode, record.Weight, record.LabelPDF)
+			service_name,
+			shipping_charges_cents,
+			delivery_date,
+			delivery_days,
+			refund_link,
+			weight
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, record.ID, record.ShipmentID, record.TrackingNumber, record.InvoiceUUID, record.RateID, record.Carrier, record.ServiceCode, record.ServiceName, record.ShippingChargesCents, record.DeliveryDate, record.DeliveryDays, record.RefundLink, record.Weight)
 	return err
 }
 
 func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]LabelRecord, error) {
+	records, _, err := s.LoadLabelRecordsPage(fromDate, toDate, limit, 0)
+	return records, err
+}
+
+func (s *Store) LoadLabelRecordsPage(fromDate string, toDate string, limit int, offset int) ([]LabelRecord, bool, error) {
 	if limit <= 0 {
 		limit = 10
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	query := `
-		SELECT id, shipment_id, tracking_number, service_code, weight, created_at
+		SELECT id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
 		FROM label_records
 	`
 	args := []any{}
-	clauses := []string{}
+	clauses := []string{"(carrier = ? OR carrier = '')"}
+	args = append(args, "Canada Post")
 	if strings.TrimSpace(fromDate) != "" {
 		clauses = append(clauses, "created_at >= ?")
 		args = append(args, fromDate+" 00:00:00")
@@ -210,49 +316,155 @@ func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]L
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
-	query += " ORDER BY created_at DESC LIMIT ?"
-	args = append(args, limit)
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit+1, offset)
 
 	rows, err := s.DB.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
 	records := []LabelRecord{}
 	for rows.Next() {
 		var rec LabelRecord
+		var refundLink sql.NullString
 		if err := rows.Scan(
 			&rec.ID,
 			&rec.ShipmentID,
 			&rec.TrackingNumber,
+			&rec.InvoiceUUID,
+			&rec.RateID,
+			&rec.Carrier,
 			&rec.ServiceCode,
+			&rec.ServiceName,
+			&rec.ShippingChargesCents,
+			&rec.DeliveryDate,
+			&rec.DeliveryDays,
+			&refundLink,
 			&rec.Weight,
 			&rec.CreatedAt,
 		); err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		if refundLink.Valid {
+			rec.RefundLink = refundLink.String
 		}
 		records = append(records, rec)
 	}
-	return records, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasNext := false
+	if len(records) > limit {
+		hasNext = true
+		records = records[:limit]
+	}
+	return records, hasNext, nil
 }
 
-func (s *Store) LoadLabelPDF(id string) ([]byte, error) {
-	var data []byte
+func (s *Store) LoadRefundLinkByLabelID(labelID string) (string, error) {
+	labelID = strings.TrimSpace(labelID)
+	if labelID == "" {
+		return "", nil
+	}
+	var link string
 	err := s.DB.QueryRow(`
-		SELECT label_pdf
+		SELECT refund_link
 		FROM label_records
 		WHERE id = ?
-	`, id).Scan(&data)
+		LIMIT 1
+	`, labelID).Scan(&link)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("label not found")
+		return "", nil
 	}
-	return data, err
+	return strings.TrimSpace(link), err
+}
+
+func (s *Store) LoadRefundLinkByShipmentID(shipmentID string) (string, error) {
+	shipmentID = strings.TrimSpace(shipmentID)
+	if shipmentID == "" {
+		return "", nil
+	}
+	var link string
+	err := s.DB.QueryRow(`
+		SELECT refund_link
+		FROM label_records
+		WHERE shipment_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, shipmentID).Scan(&link)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return strings.TrimSpace(link), err
+}
+
+func (s *Store) LoadRefundLinkByInvoiceUUID(invoiceUUID string) (string, error) {
+	invoiceUUID = strings.TrimSpace(invoiceUUID)
+	if invoiceUUID == "" {
+		return "", nil
+	}
+	var link string
+	err := s.DB.QueryRow(`
+		SELECT refund_link
+		FROM label_records
+		WHERE invoice_uuid = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, invoiceUUID).Scan(&link)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return strings.TrimSpace(link), err
+}
+
+func (s *Store) LoadLabelRecordByLabelID(labelID string) (LabelRecord, error) {
+	labelID = strings.TrimSpace(labelID)
+	if labelID == "" {
+		return LabelRecord{}, nil
+	}
+	var rec LabelRecord
+	var refundLink sql.NullString
+	err := s.DB.QueryRow(`
+		SELECT id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
+		FROM label_records
+		WHERE id = ?
+		LIMIT 1
+	`, labelID).Scan(
+		&rec.ID,
+		&rec.ShipmentID,
+		&rec.TrackingNumber,
+		&rec.InvoiceUUID,
+		&rec.RateID,
+		&rec.Carrier,
+		&rec.ServiceCode,
+		&rec.ServiceName,
+		&rec.ShippingChargesCents,
+		&rec.DeliveryDate,
+		&rec.DeliveryDays,
+		&refundLink,
+		&rec.Weight,
+		&rec.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return LabelRecord{}, nil
+	}
+	if refundLink.Valid {
+		rec.RefundLink = refundLink.String
+	}
+	return rec, err
 }
 
 type ShippingSettings struct {
 	AccountNumber   string
 	EnabledServices map[string]bool
+}
+
+type CurrencyRate struct {
+	CurrencyCode string
+	RateToCad    float64
+	UpdatedAt    time.Time
 }
 
 func (s *Store) SaveShippingSettings(clientID int64, accountNumber string, enabledServices []string) error {
@@ -281,6 +493,68 @@ func (s *Store) LoadShippingSettings(clientID int64) (ShippingSettings, error) {
 	}
 	settings.EnabledServices = parseEnabledServices(services)
 	return settings, nil
+}
+
+func (s *Store) SaveCurrencyRate(clientID int64, currencyCode string, rateToCad float64) error {
+	code := strings.ToUpper(strings.TrimSpace(currencyCode))
+	if code == "" {
+		return fmt.Errorf("currency code is required")
+	}
+	if rateToCad <= 0 {
+		return fmt.Errorf("rate_to_cad must be greater than zero")
+	}
+	_, err := s.DB.Exec(`
+		INSERT INTO currency_rates (client_id, currency_code, rate_to_cad)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE rate_to_cad = VALUES(rate_to_cad)
+	`, clientID, code, rateToCad)
+	return err
+}
+
+func (s *Store) LoadCurrencyRate(clientID int64, currencyCode string) (float64, bool, error) {
+	code := strings.ToUpper(strings.TrimSpace(currencyCode))
+	if code == "" {
+		return 0, false, nil
+	}
+	var rate float64
+	err := s.DB.QueryRow(`
+		SELECT rate_to_cad
+		FROM currency_rates
+		WHERE client_id = ? AND currency_code = ?
+	`, clientID, code).Scan(&rate)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return rate, true, nil
+}
+
+func (s *Store) LoadCurrencyRates(clientID int64) ([]CurrencyRate, error) {
+	rows, err := s.DB.Query(`
+		SELECT currency_code, rate_to_cad, updated_at
+		FROM currency_rates
+		WHERE client_id = ?
+		ORDER BY currency_code
+	`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rates []CurrencyRate
+	for rows.Next() {
+		var rate CurrencyRate
+		if err := rows.Scan(&rate.CurrencyCode, &rate.RateToCad, &rate.UpdatedAt); err != nil {
+			return nil, err
+		}
+		rates = append(rates, rate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return rates, nil
 }
 
 func parseEnabledServices(value string) map[string]bool {
