@@ -218,23 +218,24 @@ func readLine(r *bufio.Reader) (string, error) {
 }
 
 type RateSnapshot struct {
-	RateID      string                `json:"rate_id"`
-	ServiceCode string                `json:"service_code"`
-	ServiceName string                `json:"service_name"`
-	PriceCents  int64                 `json:"price_cents"`
-	CurrencyCode string               `json:"currency_code"`
-	RateToCad   float64               `json:"rate_to_cad"`
-	DeliveryDate string               `json:"delivery_date"`
-	Shipper     addressSnapshot       `json:"shipper"`
-	Customer    addressSnapshot       `json:"customer"`
-	Parcel      parcelMetrics         `json:"parcel"`
-	CustomsInfo *customsSnapshot      `json:"customs_info,omitempty"`
-	Insurance   insuranceSnapshot     `json:"insurance"`
-	Origin      canadaPostOrigin      `json:"origin"`
-	Destination canadaPostDestination `json:"destination"`
-	InvoiceUUID string                `json:"invoice_uuid"`
-	ClientID    int64                 `json:"client_id"`
-	CreatedAt   time.Time             `json:"created_at"`
+	RateID       string                `json:"rate_id"`
+	ServiceCode  string                `json:"service_code"`
+	ServiceName  string                `json:"service_name"`
+	PriceCents   int64                 `json:"price_cents"`
+	CurrencyCode string                `json:"currency_code"`
+	RateToCad    float64               `json:"rate_to_cad"`
+	DeliveryDate string                `json:"delivery_date"`
+	Signature    string                `json:"signature"`
+	Shipper      addressSnapshot       `json:"shipper"`
+	Customer     addressSnapshot       `json:"customer"`
+	Parcel       parcelMetrics         `json:"parcel"`
+	CustomsInfo  *customsSnapshot      `json:"customs_info,omitempty"`
+	Insurance    insuranceSnapshot     `json:"insurance"`
+	Origin       canadaPostOrigin      `json:"origin"`
+	Destination  canadaPostDestination `json:"destination"`
+	InvoiceUUID  string                `json:"invoice_uuid"`
+	ClientID     int64                 `json:"client_id"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type addressSnapshot struct {

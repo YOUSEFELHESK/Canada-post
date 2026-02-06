@@ -121,7 +121,29 @@ func (s *Server) CreateLabel(
 		labelID = generateLabelID()
 	}
 
-	shipment, err := s.createShipmentFromSnapshot(ctx, snapshot)
+	customInfo := req.GetShippingpluginreqeustCustomInfo()
+	if err := s.validateCustomInfoValues(customInfo); err != nil {
+		return &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "400",
+			Message: err.Error(),
+		}, nil
+	}
+	options := s.buildCanadaPostOptions(customInfo, snapshot.RateToCad)
+	options = append(options, buildSnapshotOptions(snapshot)...)
+	options = dedupeShipmentOptions(options)
+	destCountry := resolveDestinationCountry(snapshot)
+	if err := s.validateOptions(options, snapshot.ServiceCode, destCountry); err != nil {
+		return &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "400",
+			Message: err.Error(),
+		}, nil
+	}
+
+	shipment, err := s.createShipmentFromSnapshot(ctx, snapshot, options)
 	if err != nil {
 		return &shippingpluginpb.ResultResponse{
 			Success: false,
@@ -206,19 +228,19 @@ func (s *Server) CreateLabel(
 	}
 
 	record := database.LabelRecord{
-		ID:             labelID,
-		ShipmentID:     shipment.ShipmentID,
-		TrackingNumber: tracking,
-		InvoiceUUID:    invoiceUUID,
-		RateID:         selectedRateID,
-		Carrier:        "Canada Post",
-		ServiceCode:    resolveServiceCode(snapshot.ServiceCode),
-		ServiceName:    serviceName,
+		ID:                   labelID,
+		ShipmentID:           shipment.ShipmentID,
+		TrackingNumber:       tracking,
+		InvoiceUUID:          invoiceUUID,
+		RateID:               selectedRateID,
+		Carrier:              "Canada Post",
+		ServiceCode:          resolveServiceCode(snapshot.ServiceCode),
+		ServiceName:          serviceName,
 		ShippingChargesCents: snapshot.PriceCents,
-		DeliveryDate:   snapshot.DeliveryDate,
-		DeliveryDays:   int(deliveryDaysFromDeliveryDate(&snapshot.DeliveryDate)),
-		RefundLink:     refundURL,
-		Weight:         totalWeight,
+		DeliveryDate:         snapshot.DeliveryDate,
+		DeliveryDays:         int(deliveryDaysFromDeliveryDate(&snapshot.DeliveryDate)),
+		RefundLink:           refundURL,
+		Weight:               totalWeight,
 	}
 
 	if err := s.Store.SaveLabelRecord(record); err != nil {

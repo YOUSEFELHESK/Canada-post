@@ -439,23 +439,24 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 			rateToCad,
 		)
 		snapshot := RateSnapshot{
-			RateID:      rateID,
-			ServiceCode: candidate.ServiceCode,
-			ServiceName: candidate.ServiceName,
-			PriceCents:  candidate.PriceCents,
+			RateID:       rateID,
+			ServiceCode:  candidate.ServiceCode,
+			ServiceName:  candidate.ServiceName,
+			PriceCents:   candidate.PriceCents,
 			CurrencyCode: currencyCode,
-			RateToCad:   rateToCad,
+			RateToCad:    rateToCad,
 			DeliveryDate: candidate.DeliveryDate,
-			Shipper:     snapshotAddress(shipRequest.GetShipper()),
-			Customer:    snapshotAddress(shipRequest.GetCustomer()),
-			Origin:      origin,
-			Destination: dest,
-			Parcel:      parcel,
-			CustomsInfo: snapshotCustoms(shipRequest.GetCustomsInfo()),
-			Insurance:   snapshotInsurance(shipRequest.GetInsurance()),
-			InvoiceUUID: shipRequest.GetInvoiceUuid(),
-			ClientID:    clientID,
-			CreatedAt:   time.Now().UTC(),
+			Signature:    shipRequest.GetSignature().String(),
+			Shipper:      snapshotAddress(shipRequest.GetShipper()),
+			Customer:     snapshotAddress(shipRequest.GetCustomer()),
+			Origin:       origin,
+			Destination:  dest,
+			Parcel:       parcel,
+			CustomsInfo:  snapshotCustoms(shipRequest.GetCustomsInfo()),
+			Insurance:    snapshotInsurance(shipRequest.GetInsurance()),
+			InvoiceUUID:  shipRequest.GetInvoiceUuid(),
+			ClientID:     clientID,
+			CreatedAt:    time.Now().UTC(),
 		}
 		if s.RateSnapshots != nil {
 			if err := s.RateSnapshots.Save(ctx, snapshot); err != nil {
@@ -678,7 +679,7 @@ func (s *Server) createShipmentFromAPI(ctx context.Context, shipRequest *labels.
 	return shipment, nil
 }
 
-func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSnapshot) (*ShipmentResponse, error) {
+func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSnapshot, options []ShipmentOption) (*ShipmentResponse, error) {
 	if s.CanadaPost == nil {
 		return nil, errors.New("canada post client not configured")
 	}
@@ -719,7 +720,7 @@ func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSn
 		}
 	}
 
-	payload := buildShipmentRequestFromSnapshot(snapshot, destCountry)
+	payload := buildShipmentRequestFromSnapshot(snapshot, destCountry, options)
 	body, _ := json.Marshal(payload)
 	log.Printf("canada post shipment request payload: %s\n", string(body))
 
@@ -759,7 +760,7 @@ func buildShipmentRequest(origin canadaPostOrigin, dest canadaPostDestination, p
 	return payload
 }
 
-func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string) *ShipmentRequest {
+func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string, options []ShipmentOption) *ShipmentRequest {
 	payload := &ShipmentRequest{}
 	payload.RequestedShippingPoint = defaultValue(snapshot.Origin.PostalCode, snapshot.Shipper.Zip)
 	payload.DeliverySpec.ServiceCode = strings.TrimSpace(snapshot.ServiceCode)
@@ -796,10 +797,12 @@ func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string)
 	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Height = snapshot.Parcel.Height
 	payload.DeliverySpec.Preferences.ShowPackingInstructions = true
 
+	finalOptions := mergeShipmentOptions(options, destCountry)
+	if len(finalOptions) > 0 {
+		payload.DeliverySpec.Options = &ShipmentOptions{Option: finalOptions}
+	}
+
 	if requiresCustoms(destCountry) {
-		payload.DeliverySpec.Options = &ShipmentOptions{
-			Option: []ShipmentOption{{Code: defaultNonDeliveryOption}},
-		}
 		payload.DeliverySpec.Customs = buildShipmentCustoms(snapshot.CustomsInfo, snapshot.CurrencyCode, snapshot.RateToCad, conversionFromCAD(snapshot))
 	}
 	return payload

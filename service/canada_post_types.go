@@ -165,7 +165,10 @@ type ShipmentOptions struct {
 }
 
 type ShipmentOption struct {
-	Code string `xml:"option-code"`
+	Code             string  `xml:"option-code"`
+	OptionAmount     float64 `xml:"option-amount,omitempty"`
+	OptionQualifier1 string  `xml:"option-qualifier-1,omitempty"`
+	OptionQualifier2 string  `xml:"option-qualifier-2,omitempty"`
 }
 
 type ShipmentCustoms struct {

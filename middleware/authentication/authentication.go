@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -15,6 +17,10 @@ var adminError = status.New(16, "authorization is missing/expired")
 // UnaryServerInterceptor returns a new unary server interceptors that performs per-request auth.
 func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if strings.EqualFold(os.Getenv("DISABLE_AUTH"), "true") {
+			return handler(ctx, req)
+		}
+
 		g := time.Now()
 		defer func() {
 			log.Println("Time took for authentication", time.Since(g))
