@@ -19,7 +19,7 @@ func TestBuildCanadaPostOptions_Mapping(t *testing.T) {
 		{FieldName: fieldD2POOfficeID, FieldValue: "12345"},
 	}
 
-	opts := s.buildCanadaPostOptions(customInfo, 1.0)
+	opts := s.buildCanadaPostOptions(customInfo, 1.0, 0)
 	byCode := map[string]ShipmentOption{}
 	for _, opt := range opts {
 		byCode[opt.Code] = opt

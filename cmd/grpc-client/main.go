@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	//"google.golang.org/protobuf/types/known/wrapperspb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	//"google.golang.org/protobuf/types/known/emptypb"
 
@@ -50,7 +50,13 @@ func GetCustomerData(storeID int, accessToken string) ([]Customer, error) {
 
 	var allCustomers []Customer
 	client := shippingpb.NewShippingsClient(conn)
-	shipping := &shippingpb.ShippingRequest{}
+	shipping := &shippingpb.ShippingRequest{
+		ShippingName:                   wrapperspb.String("Canada Post (Live "),
+		ShippingCode:                   wrapperspb.String("CANADA_POST_LIVE"),
+		ShippingStatus:                 wrapperspb.Bool(true),
+		ShippingType:                   shippingpb.ShippingRequest_external_rate,
+		ShippingMethodCalculationsType: shippingpb.ShippingRequest_none,
+	}
 
 	shippingRes, err := client.CreateAdminShippingMethods(ctx, shipping)
 	if err != nil {

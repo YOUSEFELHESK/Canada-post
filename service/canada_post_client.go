@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -96,10 +97,8 @@ func (c *CanadaPostClient) CreateShipment(ctx context.Context, req *ShipmentRequ
 		return nil, fmt.Errorf("shipment request is nil")
 	}
 
-	
 	req.XMLNS = "http://www.canadapost.ca/ws/ncshipment-v4"
 
-	
 	log.Printf("ShipmentRequest RAW: %+v\n", req)
 
 	xmlData, err := xml.MarshalIndent(req, "", "  ")
@@ -107,7 +106,6 @@ func (c *CanadaPostClient) CreateShipment(ctx context.Context, req *ShipmentRequ
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	
 	log.Println("ShipmentRequest XML to Canada Post:\n", string(xmlData))
 
 	url := fmt.Sprintf("%s/rs/%s/ncshipment", c.BaseURL, c.CustomerNumber)
@@ -140,6 +138,99 @@ func (c *CanadaPostClient) CreateShipment(ctx context.Context, req *ShipmentRequ
 	return &shipmentResp, nil
 }
 
+func (c *CanadaPostClient) FindPostOffices(ctx context.Context, postalCode string) ([]PostOffice, error) {
+	if c == nil {
+		return nil, fmt.Errorf("canada post client is nil")
+	}
+	postalCode = normalizeCanadianPostalCode(postalCode)
+	if postalCode == "" {
+		return nil, fmt.Errorf("postal code is required")
+	}
+
+	baseURL := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	queryPostal := url.QueryEscape(postalCode)
+	endpoint := fmt.Sprintf("%s/rs/postoffice?d2po=true&postalCode=%s", baseURL, queryPostal)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/vnd.cpc.postoffice+xml")
+	httpReq.Header.Set("Accept-Language", "en-CA")
+	httpReq.SetBasicAuth(c.Username, c.Password)
+	logRequestOut(httpReq)
+
+	resp, err := c.httpClient().Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Canada Post: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	logResponseBody("FindPostOffices", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Canada Post API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var postOfficeList PostOfficeListXML
+	if err := xml.Unmarshal(body, &postOfficeList); err != nil {
+		return nil, fmt.Errorf("failed to parse XML: %w", err)
+	}
+
+	offices := make([]PostOffice, 0, len(postOfficeList.PostOffices))
+	for _, po := range postOfficeList.PostOffices {
+		offices = append(offices, PostOffice{
+			OfficeID:        strings.TrimSpace(po.OfficeID),
+			Name:            strings.TrimSpace(po.Name),
+			Location:        strings.TrimSpace(po.Location),
+			OfficeAddress:   strings.TrimSpace(po.Address.OfficeAddress),
+			City:            strings.TrimSpace(po.Address.City),
+			Province:        strings.TrimSpace(po.Address.Province),
+			PostalCode:      strings.TrimSpace(po.Address.PostalCode),
+			Latitude:        po.Address.Latitude,
+			Longitude:       po.Address.Longitude,
+			Distance:        po.Distance,
+			BilingualDesign: po.BilingualDesign,
+		})
+	}
+	return offices, nil
+}
+
+func logRequestOut(req *http.Request) {
+	if req == nil {
+		return
+	}
+	cloned := req.Clone(req.Context())
+	if cloned.Header.Get("Authorization") != "" {
+		cloned.Header.Set("Authorization", "Basic [REDACTED]")
+	}
+	if cloned.GetBody != nil {
+		body, err := cloned.GetBody()
+		if err == nil {
+			cloned.Body = body
+		}
+	}
+	dump, err := httputil.DumpRequestOut(cloned, true)
+	if err != nil {
+		log.Printf("Failed to dump request: %v", err)
+		return
+	}
+	log.Printf("Canada Post request:\n%s\n", string(dump))
+}
+
+func logResponseBody(tag string, status int, body []byte) {
+	if tag == "" {
+		tag = "Canada Post"
+	}
+	log.Printf("%s response status=%d", tag, status)
+	if len(body) == 0 {
+		log.Printf("%s response body is empty", tag)
+		return
+	}
+	log.Printf("%s response body:\n%s\n", tag, string(body))
+}
 
 func (c *CanadaPostClient) GetArtifact(ctx context.Context, artifactURL string) ([]byte, error) {
 	if c == nil {

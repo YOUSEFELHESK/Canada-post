@@ -130,7 +130,8 @@ func (s *Server) CreateLabel(
 			Message: err.Error(),
 		}, nil
 	}
-	options := s.buildCanadaPostOptions(customInfo, snapshot.RateToCad)
+	clientID := clientIDFromRequest(ctx, req)
+	options := s.buildCanadaPostOptions(customInfo, snapshot.RateToCad, clientID)
 	options = append(options, buildSnapshotOptions(snapshot)...)
 	options = dedupeShipmentOptions(options)
 	destCountry := resolveDestinationCountry(snapshot)

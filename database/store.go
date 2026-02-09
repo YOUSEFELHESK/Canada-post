@@ -58,6 +58,9 @@ func (s *Store) ensureTables() error {
 	if err := s.ensureLabelRecordsTable(); err != nil {
 		return err
 	}
+	if err := s.ensureClientPostOfficesTable(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -89,10 +92,14 @@ func (s *Store) ensureShippingSettingsTable() error {
 			client_id BIGINT PRIMARY KEY,
 			account_number VARCHAR(255) NOT NULL,
 			enabled_services TEXT NOT NULL,
+			default_postal_code VARCHAR(10) NOT NULL DEFAULT '',
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.ensureShippingSettingsColumns()
 }
 
 func (s *Store) ensureCurrencyRatesTable() error {
@@ -190,6 +197,80 @@ func (s *Store) ensureLabelRecordColumns() error {
 	return nil
 }
 
+func (s *Store) ensureClientPostOfficesTable() error {
+	_, err := s.DB.Exec(`
+		CREATE TABLE IF NOT EXISTS client_post_offices (
+			id BIGINT PRIMARY KEY AUTO_INCREMENT,
+			client_id BIGINT NOT NULL,
+			search_postal_code VARCHAR(10) NOT NULL,
+			office_id VARCHAR(20) NOT NULL,
+			office_name VARCHAR(100) NOT NULL,
+			office_location VARCHAR(100),
+			office_address VARCHAR(100),
+			city VARCHAR(50),
+			province VARCHAR(2),
+			office_postal_code VARCHAR(10),
+			latitude DECIMAL(10,7),
+			longitude DECIMAL(10,7),
+			distance_km DECIMAL(7,3),
+			bilingual BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			UNIQUE KEY uniq_client_postal_office (client_id, search_postal_code, office_id),
+			KEY idx_client_postal (client_id, search_postal_code)
+		)
+	`)
+	return err
+}
+
+func (s *Store) ensureShippingSettingsColumns() error {
+	var dbName string
+	if err := s.DB.QueryRow(`SELECT DATABASE()`).Scan(&dbName); err != nil {
+		return err
+	}
+	if strings.TrimSpace(dbName) == "" {
+		return nil
+	}
+
+	rows, err := s.DB.Query(`
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = ? AND table_name = 'shipping_settings'
+	`, dbName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		existing[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	columns := []struct {
+		name string
+		def  string
+	}{
+		{name: "default_postal_code", def: "default_postal_code VARCHAR(10) NOT NULL DEFAULT ''"},
+	}
+	for _, col := range columns {
+		if existing[col.name] {
+			continue
+		}
+		if _, err := s.DB.Exec("ALTER TABLE shipping_settings ADD COLUMN " + col.def); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SaveChosenRateID(invoiceID string, rateID string) error {
 	_, err := s.DB.Exec(`
 		INSERT INTO chosen_shipping_rates (invoice_id, rate_id)
@@ -249,20 +330,20 @@ func (s *Store) LoadLatestTrackingNumber() (string, error) {
 }
 
 type LabelRecord struct {
-	ID             string
-	ShipmentID     string
-	TrackingNumber string
-	InvoiceUUID    string
-	RateID         string
-	Carrier        string
-	ServiceCode    string
-	ServiceName    string
+	ID                   string
+	ShipmentID           string
+	TrackingNumber       string
+	InvoiceUUID          string
+	RateID               string
+	Carrier              string
+	ServiceCode          string
+	ServiceName          string
 	ShippingChargesCents int64
-	DeliveryDate   string
-	DeliveryDays   int
-	RefundLink     string
-	Weight         float64
-	CreatedAt      time.Time
+	DeliveryDate         string
+	DeliveryDays         int
+	RefundLink           string
+	Weight               float64
+	CreatedAt            time.Time
 }
 
 func (s *Store) SaveLabelRecord(record LabelRecord) error {
@@ -457,8 +538,9 @@ func (s *Store) LoadLabelRecordByLabelID(labelID string) (LabelRecord, error) {
 }
 
 type ShippingSettings struct {
-	AccountNumber   string
-	EnabledServices map[string]bool
+	AccountNumber     string
+	EnabledServices   map[string]bool
+	DefaultPostalCode string
 }
 
 type CurrencyRate struct {
@@ -481,10 +563,10 @@ func (s *Store) LoadShippingSettings(clientID int64) (ShippingSettings, error) {
 	var settings ShippingSettings
 	var services string
 	err := s.DB.QueryRow(`
-		SELECT account_number, enabled_services
+		SELECT account_number, enabled_services, default_postal_code
 		FROM shipping_settings
 		WHERE client_id = ?
-	`, clientID).Scan(&settings.AccountNumber, &services)
+	`, clientID).Scan(&settings.AccountNumber, &services, &settings.DefaultPostalCode)
 	if err == sql.ErrNoRows {
 		return ShippingSettings{}, nil
 	}
@@ -493,6 +575,16 @@ func (s *Store) LoadShippingSettings(clientID int64) (ShippingSettings, error) {
 	}
 	settings.EnabledServices = parseEnabledServices(services)
 	return settings, nil
+}
+
+func (s *Store) SaveDefaultPostalCode(clientID int64, postalCode string) error {
+	postalCode = strings.ToUpper(strings.TrimSpace(postalCode))
+	_, err := s.DB.Exec(`
+		INSERT INTO shipping_settings (client_id, account_number, enabled_services, default_postal_code)
+		VALUES (?, '', '', ?)
+		ON DUPLICATE KEY UPDATE default_postal_code = VALUES(default_postal_code)
+	`, clientID, postalCode)
+	return err
 }
 
 func (s *Store) SaveCurrencyRate(clientID int64, currencyCode string, rateToCad float64) error {

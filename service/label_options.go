@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,7 @@ const (
 	fieldNonDeliveryHandling   = "non_delivery_handling"
 	fieldD2POEnabled           = "D2PO_enabled"
 	fieldD2POOfficeID          = "D2PO_office_id"
+	fieldD2POOfficeSelection   = "D2PO_office_selection"
 	fieldD2PONotificationEmail = "D2PO_notification_email"
 )
 
@@ -57,7 +59,32 @@ var (
 
 // ListLabelShippingOptions returns the full list of Canada Post label options.
 func (s *Server) ListLabelShippingOptions(ctx context.Context, _ *emptypb.Empty) (*shippingpluginpb.ResultResponse, error) {
-	_ = ctx
+	log.Println("ListLabelShippingOptions request received")
+	logIncomingMetadata(ctx)
+	officeOptions := []string{}
+	if s.PostOffices != nil && s.Store != nil {
+		clientID := clientIDFromContextInt(ctx)
+		if clientID > 0 {
+			defaultPostal := ""
+			if settings, err := s.Store.LoadShippingSettings(clientID); err == nil {
+				defaultPostal = strings.TrimSpace(settings.DefaultPostalCode)
+			}
+			var offices []PostOffice
+			var err error
+			if defaultPostal != "" {
+				offices, err = s.PostOffices.GetStoredOfficesByPostalCode(clientID, defaultPostal)
+			} else {
+				offices, err = s.PostOffices.GetAllStoredOffices(clientID)
+			}
+			if err != nil {
+				log.Printf("failed to load cached post offices: %v", err)
+			} else {
+				for _, office := range offices {
+					officeOptions = append(officeOptions, formatPostOfficeDisplay(office))
+				}
+			}
+		}
+	}
 	credentials := []*shippingpluginpb.ShippingDynamicData{
 		buildField(fieldCODEnabled, "Enable Collect on Delivery", shippingpluginpb.FIELD_TYPE_checkbox, ""),
 		buildField(fieldCODAmount, "COD amount (in your currency)", shippingpluginpb.FIELD_TYPE_text, ""),
@@ -65,20 +92,20 @@ func (s *Server) ListLabelShippingOptions(ctx context.Context, _ *emptypb.Empty)
 		buildField(fieldDeliveryMethod, "How should the package be delivered?", shippingpluginpb.FIELD_TYPE_radio, "", deliveryMethodLabels...),
 		buildField(fieldAgeVerification, "Recipient age verification", shippingpluginpb.FIELD_TYPE_radio, "", ageVerificationLabels...),
 		buildField(fieldD2POEnabled, "Deliver to post office instead of address", shippingpluginpb.FIELD_TYPE_checkbox, ""),
+		buildField(fieldD2POOfficeSelection, "Select post office for delivery", shippingpluginpb.FIELD_TYPE_radio, "", officeOptions...),
 		buildField(fieldD2POOfficeID, "Post office ID", shippingpluginpb.FIELD_TYPE_text, ""),
 		buildField(fieldD2PONotificationEmail, "Email for pickup notification", shippingpluginpb.FIELD_TYPE_text, ""),
 		buildField(fieldNonDeliveryHandling, "What should happen if delivery fails?", shippingpluginpb.FIELD_TYPE_radio, "", nonDeliveryLabels...),
 	}
-
-	return &shippingpluginpb.ResultResponse{
+	resp := &shippingpluginpb.ResultResponse{
 		Success: true,
 		Failure: false,
-		ShippingFields: []*shippingpluginpb.ShippingPluginReqeust{
-			{
-				ShippingpluginreqeustCredentials: credentials,
-			},
+		ShippingMethod: &shippingpluginpb.ShippingPluginReqeust{
+			ShippingpluginreqeustCredentials: credentials,
 		},
-	}, nil
+	}
+	log.Printf("ListLabelShippingOptions response: %+v", resp)
+	return resp, nil
 }
 
 func buildField(name, label string, fieldType shippingpluginpb.FIELD_TYPE, value string, valueSet ...string) *shippingpluginpb.ShippingDynamicData {
@@ -91,7 +118,7 @@ func buildField(name, label string, fieldType shippingpluginpb.FIELD_TYPE, value
 	}
 }
 
-func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingDynamicData, rateToCad float64) []ShipmentOption {
+func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingDynamicData, rateToCad float64, clientID int64) []ShipmentOption {
 	values := customInfoToMap(customInfo)
 	if rateToCad <= 0 {
 		rateToCad = 1
@@ -116,9 +143,19 @@ func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingD
 	}
 
 	if parseBool(values[fieldD2POEnabled]) {
+		officeID := strings.TrimSpace(values[fieldD2POOfficeID])
+		if officeID == "" {
+			if selection := strings.TrimSpace(values[fieldD2POOfficeSelection]); selection != "" {
+				if resolved, err := s.resolveOfficeIDFromSelection(clientID, selection); err == nil {
+					officeID = resolved
+				} else {
+					log.Printf("failed to resolve post office selection: %v", err)
+				}
+			}
+		}
 		options = append(options, ShipmentOption{
 			Code:             "D2PO",
-			OptionQualifier2: strings.TrimSpace(values[fieldD2POOfficeID]),
+			OptionQualifier2: officeID,
 		})
 	}
 
@@ -160,8 +197,10 @@ func (s *Server) validateCustomInfoValues(customInfo []*shippingpluginpb.Shippin
 			return fmt.Errorf("COD includes_shipping must be provided")
 		}
 	}
-	if parseBool(values[fieldD2POEnabled]) && strings.TrimSpace(values[fieldD2POOfficeID]) == "" {
-		return fmt.Errorf("D2PO office_id is required when Deliver to Post Office is enabled")
+	if parseBool(values[fieldD2POEnabled]) &&
+		strings.TrimSpace(values[fieldD2POOfficeID]) == "" &&
+		strings.TrimSpace(values[fieldD2POOfficeSelection]) == "" {
+		return fmt.Errorf("D2PO office selection is required when Deliver to Post Office is enabled")
 	}
 
 	return nil

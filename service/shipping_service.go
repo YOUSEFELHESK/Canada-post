@@ -41,19 +41,26 @@ type Server struct {
 	Config        config.Config
 	CanadaPost    *CanadaPostClient
 	RateSnapshots *RateSnapshotStore
+	PostOffices   *PostOfficeService
 }
 
 func NewServer(store *database.Store, cfg config.Config) *Server {
+	canadaPost := NewCanadaPostClient(
+		cfg.CanadaPost.Username,
+		cfg.CanadaPost.Password,
+		cfg.CanadaPost.CustomerNumber,
+		cfg.CanadaPost.BaseURL,
+	)
+	var postOffices *PostOfficeService
+	if store != nil {
+		postOffices = NewPostOfficeService(canadaPost, store.DB)
+	}
 	return &Server{
 		Store:  store,
 		Config: cfg,
-		CanadaPost: NewCanadaPostClient(
-			cfg.CanadaPost.Username,
-			cfg.CanadaPost.Password,
-			cfg.CanadaPost.CustomerNumber,
-			cfg.CanadaPost.BaseURL,
-		),
+		CanadaPost: canadaPost,
 		RateSnapshots: NewRateSnapshotStore(cfg.Redis),
+		PostOffices:   postOffices,
 	}
 }
 

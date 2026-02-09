@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -422,9 +423,16 @@ type settingsPageData struct {
 	Enabled         map[string]bool
 	CurrencyRates   []database.CurrencyRate
 	Currencies      []currencyOption
+	PostalCodes     []string
+	DefaultPostal   string
 	SessionToken    string
 	Message         string
 	CurrencyMessage string
+	PostalMessage   string
+	PostalPage      int
+	PostalPageSize  int
+	PostalHasNext   bool
+	PostalHasPrev   bool
 	FromDate        string
 	ToDate          string
 	Labels          []database.LabelRecord
@@ -502,6 +510,70 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			log.Printf("currency rate saved: client_id=%d currency=%s rate_to_cad=%.6f", clientID, strings.ToUpper(code), rateToCad)
+		} else if formType == "postoffice_search" {
+			postalCode := normalizePostalCode(r.FormValue("postal_code"))
+			if postalCode == "" {
+				http.Error(w, "postal code is required", http.StatusBadRequest)
+				return
+			}
+			if !isValidCanadianPostalCode(postalCode) {
+				http.Error(w, "invalid Canadian postal code", http.StatusBadRequest)
+				return
+			}
+			postOfficeService := a.postOfficeService()
+			if postOfficeService == nil {
+				http.Error(w, "post office service not configured", http.StatusInternalServerError)
+				return
+			}
+			offices, err := postOfficeService.GetStoredOfficesByPostalCode(clientID, postalCode)
+			if err != nil {
+				log.Println("failed to load cached post offices:", err)
+				http.Error(w, "failed to fetch post offices", http.StatusInternalServerError)
+				return
+			}
+			if len(offices) == 0 {
+				if _, _, err := postOfficeService.GetOrFetchPostOffices(r.Context(), clientID, postalCode); err != nil {
+					log.Println("failed to fetch post offices:", err)
+					http.Error(w, "failed to fetch post offices", http.StatusInternalServerError)
+					return
+				}
+			}
+			if err := a.Store.SaveDefaultPostalCode(clientID, postalCode); err != nil {
+				log.Println("failed to save default postal code:", err)
+				http.Error(w, "failed to save default postal code", http.StatusInternalServerError)
+				return
+			}
+		} else if formType == "postoffice_delete" {
+			postalCode := normalizePostalCode(r.FormValue("postal_code"))
+			if postalCode == "" {
+				http.Error(w, "postal code is required", http.StatusBadRequest)
+				return
+			}
+			postOfficeService := a.postOfficeService()
+			if postOfficeService == nil {
+				http.Error(w, "post office service not configured", http.StatusInternalServerError)
+				return
+			}
+			if err := postOfficeService.DeletePostalCode(clientID, postalCode); err != nil {
+				log.Println("failed to delete post offices:", err)
+				http.Error(w, "failed to remove postal code", http.StatusInternalServerError)
+				return
+			}
+		} else if formType == "postoffice_default" {
+			postalCode := normalizePostalCode(r.FormValue("postal_code"))
+			if postalCode == "" {
+				http.Error(w, "postal code is required", http.StatusBadRequest)
+				return
+			}
+			if !isValidCanadianPostalCode(postalCode) {
+				http.Error(w, "invalid Canadian postal code", http.StatusBadRequest)
+				return
+			}
+			if err := a.Store.SaveDefaultPostalCode(clientID, postalCode); err != nil {
+				log.Println("failed to save default postal code:", err)
+				http.Error(w, "failed to save default postal code", http.StatusInternalServerError)
+				return
+			}
 		} else {
 			if accountNumber == "" {
 				http.Error(w, "account number is required", http.StatusBadRequest)
@@ -523,6 +595,12 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		savedParam := "saved=1"
 		if formType == "currency" {
 			savedParam = "saved_currency=1"
+		} else if formType == "postoffice_search" {
+			savedParam = "saved_postoffice=1"
+		} else if formType == "postoffice_delete" {
+			savedParam = "deleted_postoffice=1"
+		} else if formType == "postoffice_default" {
+			savedParam = "saved_postoffice_default=1"
 		}
 		http.Redirect(w, r, "/settings?client_id="+strconv.FormatInt(clientID, 10)+"&session_token="+url.QueryEscape(nextToken)+"&"+savedParam, http.StatusSeeOther)
 		return
@@ -551,11 +629,29 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	postalCodes := []string{}
+	postalPage := parsePage(r.URL.Query().Get("postal_page"))
+	postalPageSize := parsePageSize(r.URL.Query().Get("postal_page_size"))
+	postalOffset := (postalPage - 1) * postalPageSize
+	postalHasNext := false
+	if postOfficeService := a.postOfficeService(); postOfficeService != nil {
+		postalCodes, postalHasNext, err = postOfficeService.GetUsedPostalCodesPage(clientID, postalPageSize, postalOffset)
+		if err != nil {
+			log.Println("failed to load post office postal codes:", err)
+		}
+	}
+
 	fromDate := strings.TrimSpace(r.URL.Query().Get("from"))
 	toDate := strings.TrimSpace(r.URL.Query().Get("to"))
 	activeTab := strings.TrimSpace(r.URL.Query().Get("tab"))
 	if activeTab == "" && (fromDate != "" || toDate != "") {
 		activeTab = "labels"
+	}
+	if activeTab == "" && r.URL.Query().Get("postal_page") != "" {
+		activeTab = "postoffice"
+	}
+	if activeTab == "" && (r.URL.Query().Get("saved_postoffice") == "1" || r.URL.Query().Get("deleted_postoffice") == "1" || r.URL.Query().Get("saved_postoffice_default") == "1") {
+		activeTab = "postoffice"
 	}
 	if activeTab == "" {
 		activeTab = "settings"
@@ -571,27 +667,42 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := settingsPageData{
-		ClientID:      clientID,
-		AccountNumber: settings.AccountNumber,
-		Services:      serviceOptions,
-		Enabled:       settings.EnabledServices,
-		CurrencyRates: currencyRates,
-		Currencies:    currencyOptions,
-		SessionToken:  nextToken,
-		FromDate:      fromDate,
-		ToDate:        toDate,
-		Labels:        labels,
-		ActiveTab:     activeTab,
-		Page:          page,
-		PageSize:      pageSize,
-		HasNext:       hasNext,
-		HasPrev:       page > 1,
+		ClientID:       clientID,
+		AccountNumber:  settings.AccountNumber,
+		Services:       serviceOptions,
+		Enabled:        settings.EnabledServices,
+		CurrencyRates:  currencyRates,
+		Currencies:     currencyOptions,
+		PostalCodes:    postalCodes,
+		DefaultPostal:  normalizePostalCode(settings.DefaultPostalCode),
+		SessionToken:   nextToken,
+		PostalPage:     postalPage,
+		PostalPageSize: postalPageSize,
+		PostalHasNext:  postalHasNext,
+		PostalHasPrev:  postalPage > 1,
+		FromDate:       fromDate,
+		ToDate:         toDate,
+		Labels:         labels,
+		ActiveTab:      activeTab,
+		Page:           page,
+		PageSize:       pageSize,
+		HasNext:        hasNext,
+		HasPrev:        page > 1,
 	}
 	if r.URL.Query().Get("saved") == "1" {
 		data.Message = "Settings saved."
 	}
 	if r.URL.Query().Get("saved_currency") == "1" {
 		data.CurrencyMessage = "Currency rate saved."
+	}
+	if r.URL.Query().Get("saved_postoffice") == "1" {
+		data.PostalMessage = "Default postal code updated."
+	}
+	if r.URL.Query().Get("deleted_postoffice") == "1" {
+		data.PostalMessage = "Postal code removed."
+	}
+	if r.URL.Query().Get("saved_postoffice_default") == "1" {
+		data.PostalMessage = "Default postal code saved."
 	}
 
 	renderSettingsPage(w, data)
@@ -699,6 +810,19 @@ func renderSettingsPage(w http.ResponseWriter, data settingsPageData) {
 	}
 }
 
+func (a *App) postOfficeService() *service.PostOfficeService {
+	if a == nil || a.Store == nil {
+		return nil
+	}
+	client := service.NewCanadaPostClient(
+		a.Config.CanadaPost.Username,
+		a.Config.CanadaPost.Password,
+		a.Config.CanadaPost.CustomerNumber,
+		a.Config.CanadaPost.BaseURL,
+	)
+	return service.NewPostOfficeService(client, a.Store.DB)
+}
+
 func parseClientID(value string) int64 {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -709,6 +833,19 @@ func parseClientID(value string) int64 {
 		return 1
 	}
 	return id
+}
+
+var canadaPostalCodeRegex = regexp.MustCompile(`^[A-Z]\d[A-Z]\d[A-Z]\d$`)
+
+func normalizePostalCode(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "")
+	return value
+}
+
+func isValidCanadianPostalCode(value string) bool {
+	normalized := normalizePostalCode(value)
+	return canadaPostalCodeRegex.MatchString(normalized)
 }
 
 func parsePage(value string) int {
@@ -912,6 +1049,73 @@ const settingsHTML = `<!doctype html>
       color: #0f766e;
       font-size: 13px;
     }
+    .postal-list {
+      margin-top: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .postal-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      gap: 10px;
+    }
+    .postal-default {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      justify-content: space-between;
+    }
+    .postal-default-label {
+      font-size: 18px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .postal-default-value {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--text);
+    }
+    .postal-item code {
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .button-ghost {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 12px;
+      box-shadow: none;
+      cursor: pointer;
+    }
+    .button-ghost.default {
+      color: var(--accent);
+      border-color: rgba(31, 79, 215, 0.35);
+    }
+    .button-ghost.default.is-default {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 10px 20px rgba(31, 79, 215, 0.2);
+    }
+    .button-ghost.remove {
+      color: #dc2626;
+      border-color: rgba(220, 38, 38, 0.35);
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -960,6 +1164,7 @@ const settingsHTML = `<!doctype html>
     </div>
     <div class="tabs" role="tablist">
       <button class="tab {{if eq .ActiveTab "settings"}}active{{end}}" data-target="settings-panel" type="button">Canada Post Account Settings</button>
+      <button class="tab {{if eq .ActiveTab "postoffice"}}active{{end}}" data-target="postoffice-panel" type="button">Post Office Finder</button>
       <button class="tab {{if eq .ActiveTab "labels"}}active{{end}}" data-target="labels-panel" type="button">Created Labels</button>
     </div>
 
@@ -1029,6 +1234,86 @@ const settingsHTML = `<!doctype html>
             <div class="empty">No currency rates configured.</div>
           {{end}}
         </div>
+      </div>
+    </div>
+
+    <div class="card panel {{if eq .ActiveTab "postoffice"}}active{{end}}" id="postoffice-panel" style="margin-top:20px;">
+      <h1>Post Office Finder</h1>
+      <p class="hint" style="margin:0 0 14px;">Cache nearby Canada Post offices by postal code. Saved results are reused automatically.</p>
+      <form method="post" action="/settings?client_id={{.ClientID}}">
+        <input type="hidden" name="session_token" value="{{.SessionToken}}">
+        <input type="hidden" name="form_type" value="postoffice_search">
+        <label for="postal_code">Postal Code</label>
+        <input id="postal_code" name="postal_code" type="text" placeholder="M5H 2N2" required>
+        <div class="actions">
+          <button type="submit">Find Post Offices</button>
+        </div>
+        {{if .PostalMessage}}<div class="message">{{.PostalMessage}}</div>{{end}}
+      </form>
+      <div style="margin-top:18px;">
+        {{if .PostalCodes}}
+          <div class="postal-list">
+            {{if .DefaultPostal}}
+              <div class="postal-item">
+                <div>
+                  <div class="hint">Cached postal code</div>
+                  <code>{{.DefaultPostal}}</code>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <form method="post" action="/settings?client_id={{.ClientID}}">
+                    <input type="hidden" name="session_token" value="{{.SessionToken}}">
+                    <input type="hidden" name="form_type" value="postoffice_default">
+                    <input type="hidden" name="postal_code" value="{{.DefaultPostal}}">
+                    <button class="button-ghost default is-default" type="submit">Default</button>
+                  </form>
+                  <form method="post" action="/settings?client_id={{.ClientID}}">
+                    <input type="hidden" name="session_token" value="{{.SessionToken}}">
+                    <input type="hidden" name="form_type" value="postoffice_delete">
+                    <input type="hidden" name="postal_code" value="{{.DefaultPostal}}">
+                    <button class="button-ghost remove" type="submit">Remove</button>
+                  </form>
+                </div>
+              </div>
+            {{end}}
+            {{range .PostalCodes}}
+              {{if ne . $.DefaultPostal}}
+              <div class="postal-item">
+                <div>
+                  <div class="hint">Cached postal code</div>
+                  <code>{{.}}</code>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                  <form method="post" action="/settings?client_id={{$.ClientID}}">
+                    <input type="hidden" name="session_token" value="{{$.SessionToken}}">
+                    <input type="hidden" name="form_type" value="postoffice_default">
+                    <input type="hidden" name="postal_code" value="{{.}}">
+                    <button class="button-ghost default" type="submit">Default</button>
+                  </form>
+                  <form method="post" action="/settings?client_id={{$.ClientID}}">
+                    <input type="hidden" name="session_token" value="{{$.SessionToken}}">
+                    <input type="hidden" name="form_type" value="postoffice_delete">
+                    <input type="hidden" name="postal_code" value="{{.}}">
+                    <button class="button-ghost remove" type="submit">Remove</button>
+                  </form>
+                </div>
+              </div>
+              {{end}}
+            {{end}}
+          </div>
+          <div class="actions" style="justify-content: space-between; margin-top: 14px;">
+            <div class="hint">Page {{.PostalPage}}</div>
+            <div class="actions" style="margin-top: 0;">
+              {{if .PostalHasPrev}}
+                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{dec .PostalPage}}&postal_page_size={{.PostalPageSize}}">Previous</a>
+              {{end}}
+              {{if .PostalHasNext}}
+                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{inc .PostalPage}}&postal_page_size={{.PostalPageSize}}">Next</a>
+              {{end}}
+            </div>
+          </div>
+        {{else}}
+          <div class="empty">No cached postal codes yet.</div>
+        {{end}}
       </div>
     </div>
 
