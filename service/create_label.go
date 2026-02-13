@@ -69,6 +69,10 @@ func (s *Server) CreateLabel(
 		}, nil
 	}
 	log.Printf("✅ Snapshot loaded: rate_id=%s service_code=%s", selectedRateID, snapshot.ServiceCode)
+	// CreateLabel customs are dynamic and should override cached snapshot customs when provided.
+	if customs := shipRequest.GetCustomsInfo(); customs != nil {
+		snapshot.CustomsInfo = snapshotCustoms(customs)
+	}
 	log.Printf("📦 CreateLabel XML includes: customs=%v phone=%s client_voice=%s",
 		snapshot.CustomsInfo != nil,
 		snapshot.Shipper.Phone,
@@ -122,29 +126,58 @@ func (s *Server) CreateLabel(
 	}
 
 	customInfo := req.GetShippingpluginreqeustCustomInfo()
-	if err := s.validateCustomInfoValues(customInfo); err != nil {
-		return &shippingpluginpb.ResultResponse{
+	incomingCustomValues := buildOptionsMap(customInfo)
+	customValues := mergeOptionsMaps(snapshot.CustomOptions, incomingCustomValues)
+	if len(incomingCustomValues) == 0 && len(snapshot.CustomOptions) > 0 {
+		log.Printf("CreateLabel request has no custom options; using %d stored options from rate snapshot", len(snapshot.CustomOptions))
+	}
+	destCountry := resolveDestinationCountry(snapshot)
+	if err := s.validateCustomInfoMapValues(customValues); err != nil {
+		resp := &shippingpluginpb.ResultResponse{
 			Success: false,
 			Failure: true,
 			Code:    "400",
 			Message: err.Error(),
-		}, nil
+		}
+		logPluginResponse("CreateLabel", resp)
+		return resp, nil
+	}
+	if err := validateCanadaPostOptionRules(customValues, snapshot.Signature, snapshot.Customer.Phone, destCountry, snapshot.RateToCad); err != nil {
+		resp := &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "400",
+			Message: err.Error(),
+		}
+		logPluginResponse("CreateLabel", resp)
+		return resp, nil
 	}
 	clientID := clientIDFromRequest(ctx, req)
-	options := s.buildCanadaPostOptions(customInfo, snapshot.RateToCad, clientID)
-	options = append(options, buildSnapshotOptions(snapshot)...)
-	options = dedupeShipmentOptions(options)
-	destCountry := resolveDestinationCountry(snapshot)
-	if err := s.validateOptions(options, snapshot.ServiceCode, destCountry); err != nil {
-		return &shippingpluginpb.ResultResponse{
+	options, notification, err := s.buildCreateLabelOptions(customValues, snapshot.RateToCad, clientID, destCountry)
+	if err != nil {
+		resp := &shippingpluginpb.ResultResponse{
 			Success: false,
 			Failure: true,
 			Code:    "400",
 			Message: err.Error(),
-		}, nil
+		}
+		logPluginResponse("CreateLabel", resp)
+		return resp, nil
+	}
+	options = append(options, buildSnapshotOptions(snapshot)...)
+	options = dedupeShipmentOptions(options)
+	if err := s.validateOptions(options, snapshot.ServiceCode, destCountry); err != nil {
+		resp := &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "400",
+			Message: err.Error(),
+		}
+		logPluginResponse("CreateLabel", resp)
+		return resp, nil
 	}
 
-	shipment, err := s.createShipmentFromSnapshot(ctx, snapshot, options)
+	shipment, err := s.createShipmentFromSnapshot(ctx, snapshot, options, notification)
 	if err != nil {
 		return &shippingpluginpb.ResultResponse{
 			Success: false,
@@ -248,6 +281,7 @@ func (s *Server) CreateLabel(
 		log.Println("❌ Failed to store label record:", err)
 	}
 
+	logPluginResponse("CreateLabel", returnData)
 	return returnData, nil
 }
 

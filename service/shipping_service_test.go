@@ -82,3 +82,60 @@ func TestValidateCustomsWeight(t *testing.T) {
 		t.Fatalf("expected customs weight exceeding parcel weight to be invalid")
 	}
 }
+
+func TestBuildShipmentRequestFromSnapshot_D2POIncludesClientVoiceAndNotification(t *testing.T) {
+	snapshot := RateSnapshot{
+		ServiceCode: "DOM.EP",
+		Origin: canadaPostOrigin{
+			PostalCode: "M5H2N2",
+		},
+		Shipper: addressSnapshot{
+			Street1:      "123 Main Street",
+			City:         "Toronto",
+			ProvinceCode: "ON",
+			Zip:          "M5H2N2",
+			Phone:        "+12015550123",
+			FullName:     "Elhesk",
+			Company:      "Elhesk",
+		},
+		Customer: addressSnapshot{
+			Street1:      "123 Main Street",
+			City:         "Toronto",
+			ProvinceCode: "ON",
+			CountryCode:  "CA",
+			Zip:          "M5H2N2",
+			Phone:        "+12015550123",
+			FullName:     "yousef elhesk",
+		},
+		Destination: canadaPostDestination{
+			Country: "CA",
+		},
+		Parcel: parcelMetrics{
+			Weight: 2.27,
+			Length: 5,
+			Width:  5,
+			Height: 5,
+		},
+	}
+
+	options := []ShipmentOption{
+		{Code: "D2PO", OptionQualifier2: "0000370789"},
+	}
+	notification := &ShipmentNotification{
+		Email:       "yousef@gmail.com",
+		OnShipment:  true,
+		OnException: true,
+		OnDelivery:  true,
+	}
+
+	req := buildShipmentRequestFromSnapshot(snapshot, "CA", options, notification)
+	if req.DeliverySpec.Destination.ClientVoiceNumber != "+12015550123" {
+		t.Fatalf("expected destination client voice number to be set for D2PO, got %q", req.DeliverySpec.Destination.ClientVoiceNumber)
+	}
+	if req.DeliverySpec.Notification == nil {
+		t.Fatalf("expected notification block for D2PO request")
+	}
+	if req.DeliverySpec.Notification.Email != "yousef@gmail.com" {
+		t.Fatalf("expected notification email to be set, got %q", req.DeliverySpec.Notification.Email)
+	}
+}

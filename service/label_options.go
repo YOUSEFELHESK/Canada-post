@@ -22,12 +22,19 @@ const (
 	fieldD2POOfficeID          = "D2PO_office_id"
 	fieldD2POOfficeSelection   = "D2PO_office_selection"
 	fieldD2PONotificationEmail = "D2PO_notification_email"
+	fieldSOEnabled             = "SO_enabled"
+	fieldCOVEnabled            = "COV_enabled"
+	fieldCOVAmount             = "COV_amount"
+
+	labelNoDeliveryMethod      = "No Delivery Preference"
+	labelNoD2POSelection       = "No Post Office Delivery"
+	labelNoNonDeliveryHandling = "No Non-Delivery Handling"
 )
 
 var (
 	ageVerificationLabels = []string{"No Age Verification", "Proof of Age 18+", "Proof of Age 19+"}
-	deliveryMethodLabels  = []string{"Standard Delivery", "Hold at Post Office", "Do Not Safe Drop", "Leave at Door"}
-	nonDeliveryLabels     = []string{"Return at Sender's Expense", "Return to Sender", "Abandon Shipment"}
+	deliveryMethodLabels  = []string{labelNoDeliveryMethod, "Standard Delivery", "Hold for Pickup (Pay at Post Office)", "Do Not Safe Drop", "Leave at Door"}
+	nonDeliveryLabels     = []string{labelNoNonDeliveryHandling, "Return at Sender's Expense", "Return to Sender", "Abandon Shipment"}
 
 	ageVerificationMap = map[string]string{
 		"NO AGE VERIFICATION": "NONE",
@@ -38,16 +45,17 @@ var (
 		"PA19":                "PA19",
 	}
 	deliveryMethodMap = map[string]string{
-		"STANDARD DELIVERY":   "STANDARD",
-		"HOLD AT POST OFFICE": "HFP",
-		"DO NOT SAFE DROP":    "DNS",
-		"LEAVE AT DOOR":       "LAD",
-		"STANDARD":            "STANDARD",
-		"HFP":                 "HFP",
-		"DNS":                 "DNS",
-		"LAD":                 "LAD",
+		"NO DELIVERY PREFERENCE":               "STANDARD",
+		"HOLD FOR PICKUP (PAY AT POST OFFICE)": "HFP",
+		"DO NOT SAFE DROP":                     "DNS",
+		"LEAVE AT DOOR":                        "LAD",
+		"STANDARD":                             "STANDARD",
+		"HFP":                                  "HFP",
+		"DNS":                                  "DNS",
+		"LAD":                                  "LAD",
 	}
 	nonDeliveryMap = map[string]string{
+		"NO NON-DELIVERY HANDLING":   "",
 		"RETURN AT SENDER'S EXPENSE": "RASE",
 		"RETURN TO SENDER":           "RTS",
 		"ABANDON SHIPMENT":           "ABAN",
@@ -61,7 +69,20 @@ var (
 func (s *Server) ListLabelShippingOptions(ctx context.Context, _ *emptypb.Empty) (*shippingpluginpb.ResultResponse, error) {
 	log.Println("ListLabelShippingOptions request received")
 	logIncomingMetadata(ctx)
-	officeOptions := []string{}
+	credentials := s.buildLabelOptionsCredentials(ctx)
+	resp := &shippingpluginpb.ResultResponse{
+		Success: true,
+		Failure: false,
+		ShippingMethod: &shippingpluginpb.ShippingPluginReqeust{
+			ShippingpluginreqeustCredentials: credentials,
+		},
+	}
+	log.Printf("ListLabelShippingOptions response: %+v", resp)
+	return resp, nil
+}
+
+func (s *Server) buildLabelOptionsCredentials(ctx context.Context) []*shippingpluginpb.ShippingDynamicData {
+	officeOptions := []string{labelNoD2POSelection}
 	if s.PostOffices != nil && s.Store != nil {
 		clientID := clientIDFromContextInt(ctx)
 		if clientID > 0 {
@@ -85,27 +106,15 @@ func (s *Server) ListLabelShippingOptions(ctx context.Context, _ *emptypb.Empty)
 			}
 		}
 	}
-	credentials := []*shippingpluginpb.ShippingDynamicData{
-		buildField(fieldCODEnabled, "Enable Collect on Delivery", shippingpluginpb.FIELD_TYPE_checkbox, ""),
+	return []*shippingpluginpb.ShippingDynamicData{
 		buildField(fieldCODAmount, "COD amount (in your currency)", shippingpluginpb.FIELD_TYPE_text, ""),
 		buildField(fieldCODIncludesShipping, "COD amount includes shipping cost", shippingpluginpb.FIELD_TYPE_checkbox, ""),
 		buildField(fieldDeliveryMethod, "How should the package be delivered?", shippingpluginpb.FIELD_TYPE_radio, "", deliveryMethodLabels...),
 		buildField(fieldAgeVerification, "Recipient age verification", shippingpluginpb.FIELD_TYPE_radio, "", ageVerificationLabels...),
-		buildField(fieldD2POEnabled, "Deliver to post office instead of address", shippingpluginpb.FIELD_TYPE_checkbox, ""),
-		buildField(fieldD2POOfficeSelection, "Select post office for delivery", shippingpluginpb.FIELD_TYPE_radio, "", officeOptions...),
-		buildField(fieldD2POOfficeID, "Post office ID", shippingpluginpb.FIELD_TYPE_text, ""),
+		buildField(fieldD2POOfficeSelection, "Select post office for delivery (Canada only)", shippingpluginpb.FIELD_TYPE_radio, "", officeOptions...),
 		buildField(fieldD2PONotificationEmail, "Email for pickup notification", shippingpluginpb.FIELD_TYPE_text, ""),
-		buildField(fieldNonDeliveryHandling, "What should happen if delivery fails?", shippingpluginpb.FIELD_TYPE_radio, "", nonDeliveryLabels...),
+		buildField(fieldNonDeliveryHandling, "What should happen if delivery fails? (USA/International only)", shippingpluginpb.FIELD_TYPE_radio, "", nonDeliveryLabels...),
 	}
-	resp := &shippingpluginpb.ResultResponse{
-		Success: true,
-		Failure: false,
-		ShippingMethod: &shippingpluginpb.ShippingPluginReqeust{
-			ShippingpluginreqeustCredentials: credentials,
-		},
-	}
-	log.Printf("ListLabelShippingOptions response: %+v", resp)
-	return resp, nil
 }
 
 func buildField(name, label string, fieldType shippingpluginpb.FIELD_TYPE, value string, valueSet ...string) *shippingpluginpb.ShippingDynamicData {
@@ -125,11 +134,11 @@ func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingD
 	}
 
 	options := make([]ShipmentOption, 0, 8)
-	if parseBool(values[fieldCODEnabled]) {
-		amount, _ := parseAmount(values[fieldCODAmount])
+	codAmount, codAmountOK := parseAmount(values[fieldCODAmount])
+	if isCODEnabled(values, codAmountOK) {
 		options = append(options, ShipmentOption{
 			Code:             "COD",
-			OptionAmount:     amount * rateToCad,
+			OptionAmount:     codAmount * rateToCad,
 			OptionQualifier1: normalizeBoolString(values[fieldCODIncludesShipping]),
 		})
 	}
@@ -142,7 +151,7 @@ func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingD
 		options = append(options, ShipmentOption{Code: val})
 	}
 
-	if parseBool(values[fieldD2POEnabled]) {
+	if isD2POEnabled(values) {
 		officeID := strings.TrimSpace(values[fieldD2POOfficeID])
 		if officeID == "" {
 			if selection := strings.TrimSpace(values[fieldD2POOfficeSelection]); selection != "" {
@@ -168,7 +177,10 @@ func (s *Server) buildCanadaPostOptions(customInfo []*shippingpluginpb.ShippingD
 
 func (s *Server) validateCustomInfoValues(customInfo []*shippingpluginpb.ShippingDynamicData) error {
 	values := customInfoToMap(customInfo)
+	return s.validateCustomInfoMapValues(values)
+}
 
+func (s *Server) validateCustomInfoMapValues(values map[string]string) error {
 	if err := validateBoolField(values, fieldCODEnabled); err != nil {
 		return err
 	}
@@ -176,6 +188,12 @@ func (s *Server) validateCustomInfoValues(customInfo []*shippingpluginpb.Shippin
 		return err
 	}
 	if err := validateBoolField(values, fieldD2POEnabled); err != nil {
+		return err
+	}
+	if err := validateBoolField(values, fieldSOEnabled); err != nil {
+		return err
+	}
+	if err := validateBoolField(values, fieldCOVEnabled); err != nil {
 		return err
 	}
 
@@ -189,18 +207,21 @@ func (s *Server) validateCustomInfoValues(customInfo []*shippingpluginpb.Shippin
 		return err
 	}
 
-	if parseBool(values[fieldCODEnabled]) {
-		if _, ok := parseAmount(values[fieldCODAmount]); !ok {
-			return fmt.Errorf("COD amount is required and must be a positive number")
-		}
-		if strings.TrimSpace(values[fieldCODIncludesShipping]) == "" {
-			return fmt.Errorf("COD includes_shipping must be provided")
-		}
+	_, codAmountOK := parseAmount(values[fieldCODAmount])
+	codRaw := strings.TrimSpace(values[fieldCODAmount])
+	if codRaw != "" && !codAmountOK {
+		return fmt.Errorf("COD amount is required and must be a positive number")
 	}
-	if parseBool(values[fieldD2POEnabled]) &&
-		strings.TrimSpace(values[fieldD2POOfficeID]) == "" &&
-		strings.TrimSpace(values[fieldD2POOfficeSelection]) == "" {
-		return fmt.Errorf("D2PO office selection is required when Deliver to Post Office is enabled")
+	if parseBool(values[fieldCODEnabled]) && !codAmountOK {
+		return fmt.Errorf("COD amount is required and must be a positive number")
+	}
+	_, covAmountOK := parseAmount(values[fieldCOVAmount])
+	covRaw := strings.TrimSpace(values[fieldCOVAmount])
+	if covRaw != "" && !covAmountOK {
+		return fmt.Errorf("COV amount is required and must be a positive number")
+	}
+	if parseBool(values[fieldCOVEnabled]) && !covAmountOK {
+		return fmt.Errorf("COV amount is required and must be a positive number")
 	}
 
 	return nil
@@ -218,6 +239,9 @@ func (s *Server) validateOptions(options []ShipmentOption, _ string, destination
 	hasCOD := false
 	hasHFP := false
 	hasD2PO := false
+	destCountry := strings.ToUpper(strings.TrimSpace(destination))
+	isCanada := destCountry == "CA"
+	enforceGeo := destCountry != ""
 
 	for _, opt := range options {
 		code := strings.ToUpper(strings.TrimSpace(opt.Code))
@@ -230,8 +254,14 @@ func (s *Server) validateOptions(options []ShipmentOption, _ string, destination
 		case "DNS", "LAD":
 			deliveryCount++
 		case "RASE", "RTS", "ABAN":
+			if enforceGeo && isCanada {
+				return fmt.Errorf("non-delivery handling options are only valid for USA/International shipments")
+			}
 			nonDeliveryCount++
 		case "COD":
+			if enforceGeo && !isCanada {
+				return fmt.Errorf("COD is only available for Canada destinations")
+			}
 			hasCOD = true
 			if opt.OptionAmount <= 0 {
 				return fmt.Errorf("COD amount must be greater than zero")
@@ -244,6 +274,9 @@ func (s *Server) validateOptions(options []ShipmentOption, _ string, destination
 				return fmt.Errorf("coverage amount must be greater than zero")
 			}
 		case "D2PO":
+			if enforceGeo && !isCanada {
+				return fmt.Errorf("D2PO is only available for Canada destinations")
+			}
 			hasD2PO = true
 			if strings.TrimSpace(opt.OptionQualifier2) == "" {
 				return fmt.Errorf("D2PO office_id is required")
@@ -260,11 +293,40 @@ func (s *Server) validateOptions(options []ShipmentOption, _ string, destination
 	if nonDeliveryCount > 1 {
 		return fmt.Errorf("only one non-delivery handling option can be selected")
 	}
+	if hasD2PO && deliveryCount > 0 {
+		return fmt.Errorf("delivery method is mutually exclusive with Deliver to Post Office")
+	}
 
 	if hasCOD && !(hasHFP || hasD2PO) {
 		return fmt.Errorf("COD requires Hold for Pickup or Deliver to Post Office to be selected")
 	}
 
+	return nil
+}
+
+func validateCustomInfoForDestination(values map[string]string, destination string) error {
+	destCountry := strings.ToUpper(strings.TrimSpace(destination))
+	if destCountry == "" {
+		return nil
+	}
+	if destCountry == "CA" {
+		nonDelivery := resolveMappedValue(values[fieldNonDeliveryHandling], nonDeliveryMap)
+		if nonDelivery == "RASE" || nonDelivery == "RTS" || nonDelivery == "ABAN" {
+			selected := strings.TrimSpace(values[fieldNonDeliveryHandling])
+			if selected == "" {
+				selected = nonDelivery
+			}
+			return fmt.Errorf("non_delivery_handling=%s is not allowed for destination CA. choose non-delivery handling only for USA/International shipments", selected)
+		}
+		return nil
+	}
+	_, codAmountOK := parseAmount(values[fieldCODAmount])
+	if isCODEnabled(values, codAmountOK) {
+		return fmt.Errorf("COD is only available for Canada destinations")
+	}
+	if isD2POEnabled(values) {
+		return fmt.Errorf("D2PO is only available for Canada destinations")
+	}
 	return nil
 }
 
@@ -296,9 +358,6 @@ func parseBool(value string) bool {
 func normalizeBoolString(value string) string {
 	if parseBool(value) {
 		return "true"
-	}
-	if strings.TrimSpace(value) == "" {
-		return ""
 	}
 	return "false"
 }

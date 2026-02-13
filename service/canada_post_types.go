@@ -28,6 +28,8 @@ type RateRequest struct {
 			CountryCode string `xml:"country-code"`
 		} `xml:"international,omitempty"`
 	} `xml:"destination"`
+
+	Options *RateOptions `xml:"options,omitempty"`
 }
 
 type RateResponse struct {
@@ -151,6 +153,8 @@ type ShipmentRequest struct {
 			} `xml:"dimensions"`
 		} `xml:"parcel-characteristics"`
 
+		Notification *ShipmentNotification `xml:"notification,omitempty"`
+
 		Preferences struct {
 			ShowPackingInstructions bool `xml:"show-packing-instructions"`
 		} `xml:"preferences"`
@@ -164,11 +168,27 @@ type ShipmentOptions struct {
 	Option []ShipmentOption `xml:"option"`
 }
 
+type RateOptions struct {
+	Option []RateOption `xml:"option"`
+}
+
+type RateOption struct {
+	Code         string  `xml:"option-code"`
+	OptionAmount float64 `xml:"option-amount,omitempty"`
+}
+
 type ShipmentOption struct {
 	Code             string  `xml:"option-code"`
 	OptionAmount     float64 `xml:"option-amount,omitempty"`
 	OptionQualifier1 string  `xml:"option-qualifier-1,omitempty"`
 	OptionQualifier2 string  `xml:"option-qualifier-2,omitempty"`
+}
+
+type ShipmentNotification struct {
+	Email       string `xml:"email"`
+	OnShipment  bool   `xml:"on-shipment"`
+	OnException bool   `xml:"on-exception"`
+	OnDelivery  bool   `xml:"on-delivery"`
 }
 
 type ShipmentCustoms struct {

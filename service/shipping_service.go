@@ -56,9 +56,9 @@ func NewServer(store *database.Store, cfg config.Config) *Server {
 		postOffices = NewPostOfficeService(canadaPost, store.DB)
 	}
 	return &Server{
-		Store:  store,
-		Config: cfg,
-		CanadaPost: canadaPost,
+		Store:         store,
+		Config:        cfg,
+		CanadaPost:    canadaPost,
 		RateSnapshots: NewRateSnapshotStore(cfg.Redis),
 		PostOffices:   postOffices,
 	}
@@ -338,6 +338,12 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 		return nil, errors.New("canada post client not configured")
 	}
 
+	customInfo := req.GetShippingpluginreqeustCustomInfo()
+	customValues := buildOptionsMap(customInfo)
+	if err := s.validateCustomInfoMapValues(customValues); err != nil {
+		return nil, err
+	}
+
 	settings := database.ShippingSettings{}
 	clientID := clientIDFromRequest(ctx, req)
 	if clientID > 0 {
@@ -370,6 +376,10 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 
 	origin := mapCanadaPostOrigin(shipRequest.GetShipper())
 	dest := mapCanadaPostDestination(shipRequest.GetCustomer())
+	recipientPhone := unwrapStringValue(shipRequest.GetCustomer().GetPhone())
+	if err := validateCanadaPostOptionRules(customValues, shipRequest.GetSignature().String(), recipientPhone, dest.Country, rateToCad); err != nil {
+		return nil, err
+	}
 
 	storeCanadaPostAddresses(shipRequest.GetInvoiceUuid(), origin, dest)
 
@@ -417,6 +427,14 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 		}
 	}
 
+	rateOptions, err := buildGetRatesOptions(customValues, rateToCad, shipRequest.GetSignature().String())
+	if err != nil {
+		return nil, err
+	}
+	if len(rateOptions) > 0 {
+		payload.Options = &RateOptions{Option: rateOptions}
+	}
+
 	body, _ := xml.MarshalIndent(payload, "", "  ")
 
 	log.Printf("canada post rates request payload:\n%s\n", string(body))
@@ -446,24 +464,25 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 			rateToCad,
 		)
 		snapshot := RateSnapshot{
-			RateID:       rateID,
-			ServiceCode:  candidate.ServiceCode,
-			ServiceName:  candidate.ServiceName,
-			PriceCents:   candidate.PriceCents,
-			CurrencyCode: currencyCode,
-			RateToCad:    rateToCad,
-			DeliveryDate: candidate.DeliveryDate,
-			Signature:    shipRequest.GetSignature().String(),
-			Shipper:      snapshotAddress(shipRequest.GetShipper()),
-			Customer:     snapshotAddress(shipRequest.GetCustomer()),
-			Origin:       origin,
-			Destination:  dest,
-			Parcel:       parcel,
-			CustomsInfo:  snapshotCustoms(shipRequest.GetCustomsInfo()),
-			Insurance:    snapshotInsurance(shipRequest.GetInsurance()),
-			InvoiceUUID:  shipRequest.GetInvoiceUuid(),
-			ClientID:     clientID,
-			CreatedAt:    time.Now().UTC(),
+			RateID:        rateID,
+			ServiceCode:   candidate.ServiceCode,
+			ServiceName:   candidate.ServiceName,
+			PriceCents:    candidate.PriceCents,
+			CurrencyCode:  currencyCode,
+			RateToCad:     rateToCad,
+			DeliveryDate:  candidate.DeliveryDate,
+			Signature:     shipRequest.GetSignature().String(),
+			CustomOptions: cloneOptionsMap(customValues),
+			Shipper:       snapshotAddress(shipRequest.GetShipper()),
+			Customer:      snapshotAddress(shipRequest.GetCustomer()),
+			Origin:        origin,
+			Destination:   dest,
+			Parcel:        parcel,
+			CustomsInfo:   snapshotCustoms(shipRequest.GetCustomsInfo()),
+			Insurance:     snapshotInsurance(shipRequest.GetInsurance()),
+			InvoiceUUID:   shipRequest.GetInvoiceUuid(),
+			ClientID:      clientID,
+			CreatedAt:     time.Now().UTC(),
 		}
 		if s.RateSnapshots != nil {
 			if err := s.RateSnapshots.Save(ctx, snapshot); err != nil {
@@ -686,7 +705,7 @@ func (s *Server) createShipmentFromAPI(ctx context.Context, shipRequest *labels.
 	return shipment, nil
 }
 
-func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSnapshot, options []ShipmentOption) (*ShipmentResponse, error) {
+func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSnapshot, options []ShipmentOption, notification *ShipmentNotification) (*ShipmentResponse, error) {
 	if s.CanadaPost == nil {
 		return nil, errors.New("canada post client not configured")
 	}
@@ -727,7 +746,7 @@ func (s *Server) createShipmentFromSnapshot(ctx context.Context, snapshot RateSn
 		}
 	}
 
-	payload := buildShipmentRequestFromSnapshot(snapshot, destCountry, options)
+	payload := buildShipmentRequestFromSnapshot(snapshot, destCountry, options, notification)
 	body, _ := json.Marshal(payload)
 	log.Printf("canada post shipment request payload: %s\n", string(body))
 
@@ -767,7 +786,7 @@ func buildShipmentRequest(origin canadaPostOrigin, dest canadaPostDestination, p
 	return payload
 }
 
-func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string, options []ShipmentOption) *ShipmentRequest {
+func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string, options []ShipmentOption, notification *ShipmentNotification) *ShipmentRequest {
 	payload := &ShipmentRequest{}
 	payload.RequestedShippingPoint = defaultValue(snapshot.Origin.PostalCode, snapshot.Shipper.Zip)
 	payload.DeliverySpec.ServiceCode = strings.TrimSpace(snapshot.ServiceCode)
@@ -788,7 +807,8 @@ func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string,
 	}
 	payload.DeliverySpec.Destination.Name = defaultValue(recipientName, "Recipient")
 	payload.DeliverySpec.Destination.Company = strings.TrimSpace(snapshot.Customer.Company)
-	if requiresClientVoice(snapshot.ServiceCode) {
+	// D2PO requires recipient phone in destination/client-voice-number.
+	if requiresClientVoice(snapshot.ServiceCode) || hasShipmentOptionCode(options, "D2PO") {
 		payload.DeliverySpec.Destination.ClientVoiceNumber = strings.TrimSpace(snapshot.Customer.Phone)
 	}
 	payload.DeliverySpec.Destination.AddressDetails.AddressLine1 = sanitizeAddressLine(defaultValue(snapshot.Customer.Street1, snapshot.Destination.AddressLine))
@@ -802,6 +822,9 @@ func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string,
 	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Length = snapshot.Parcel.Length
 	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Width = snapshot.Parcel.Width
 	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Height = snapshot.Parcel.Height
+	if notification != nil {
+		payload.DeliverySpec.Notification = notification
+	}
 	payload.DeliverySpec.Preferences.ShowPackingInstructions = true
 
 	finalOptions := mergeShipmentOptions(options, destCountry)
@@ -813,6 +836,15 @@ func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string,
 		payload.DeliverySpec.Customs = buildShipmentCustoms(snapshot.CustomsInfo, snapshot.CurrencyCode, snapshot.RateToCad, conversionFromCAD(snapshot))
 	}
 	return payload
+}
+
+func hasShipmentOptionCode(options []ShipmentOption, code string) bool {
+	for _, opt := range options {
+		if strings.EqualFold(strings.TrimSpace(opt.Code), code) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildShipmentCustoms(info *customsSnapshot, fallbackCurrency string, rateToCad float64, conversion string) *ShipmentCustoms {

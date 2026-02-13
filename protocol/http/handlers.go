@@ -40,6 +40,7 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	sessionToken := r.URL.Query().Get("session_token")
+	widgets := strings.TrimSpace(r.URL.Query().Get("widgets"))
 
 	fmt.Println("code:", code)
 	fmt.Println("state:", state)
@@ -67,7 +68,11 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Failed to create session token", http.StatusInternalServerError)
 				return
 			}
-			http.Redirect(w, r, "/settings?client_id="+strconv.FormatInt(int64(storeID), 10)+"&session_token="+url.QueryEscape(oneTime), http.StatusSeeOther)
+			redirectURL := "/settings?client_id=" + strconv.FormatInt(int64(storeID), 10) + "&session_token=" + url.QueryEscape(oneTime)
+			if widgets != "" {
+				redirectURL += "&widgets=" + url.QueryEscape(widgets)
+			}
+			http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 			return
 		}
 
@@ -144,7 +149,11 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to create session token", http.StatusInternalServerError)
 			return
 		}
-		http.Redirect(w, r, "/settings?client_id="+strconv.FormatInt(int64(storeID), 10)+"&session_token="+url.QueryEscape(oneTime), http.StatusSeeOther)
+		redirectURL := "/settings?client_id=" + strconv.FormatInt(int64(storeID), 10) + "&session_token=" + url.QueryEscape(oneTime)
+		if widgets != "" {
+			redirectURL += "&widgets=" + url.QueryEscape(widgets)
+		}
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
 	}
 
@@ -441,6 +450,7 @@ type settingsPageData struct {
 	PageSize        int
 	HasNext         bool
 	HasPrev         bool
+	Widgets         int
 }
 
 func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +494,10 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	nextToken := sessionToken
+	widgetsParam := strings.TrimSpace(r.URL.Query().Get("widgets"))
+	if widgetsParam == "" && r.Method == http.MethodPost {
+		widgetsParam = strings.TrimSpace(r.FormValue("widgets"))
+	}
 	if r.Method == http.MethodPost {
 		accountNumber := strings.TrimSpace(r.FormValue("account_number"))
 		formType := strings.TrimSpace(r.FormValue("form_type"))
@@ -602,7 +616,11 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		} else if formType == "postoffice_default" {
 			savedParam = "saved_postoffice_default=1"
 		}
-		http.Redirect(w, r, "/settings?client_id="+strconv.FormatInt(clientID, 10)+"&session_token="+url.QueryEscape(nextToken)+"&"+savedParam, http.StatusSeeOther)
+		redirectURL := "/settings?client_id=" + strconv.FormatInt(clientID, 10) + "&session_token=" + url.QueryEscape(nextToken) + "&" + savedParam
+		if widgetsParam != "" {
+			redirectURL += "&widgets=" + url.QueryEscape(widgetsParam)
+		}
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
 	}
 
@@ -644,6 +662,7 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	fromDate := strings.TrimSpace(r.URL.Query().Get("from"))
 	toDate := strings.TrimSpace(r.URL.Query().Get("to"))
 	activeTab := strings.TrimSpace(r.URL.Query().Get("tab"))
+	widgets := parseWidgets(widgetsParam)
 	if activeTab == "" && (fromDate != "" || toDate != "") {
 		activeTab = "labels"
 	}
@@ -651,6 +670,9 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		activeTab = "postoffice"
 	}
 	if activeTab == "" && (r.URL.Query().Get("saved_postoffice") == "1" || r.URL.Query().Get("deleted_postoffice") == "1" || r.URL.Query().Get("saved_postoffice_default") == "1") {
+		activeTab = "postoffice"
+	}
+	if widgets == 2 {
 		activeTab = "postoffice"
 	}
 	if activeTab == "" {
@@ -688,6 +710,7 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		PageSize:       pageSize,
 		HasNext:        hasNext,
 		HasPrev:        page > 1,
+		Widgets:        widgets,
 	}
 	if r.URL.Query().Get("saved") == "1" {
 		data.Message = "Settings saved."
@@ -870,6 +893,18 @@ func parsePageSize(value string) int {
 		return 15
 	}
 	return size
+}
+
+func parseWidgets(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 const settingsHTML = `<!doctype html>
@@ -1162,12 +1197,18 @@ const settingsHTML = `<!doctype html>
         <p class="page-sub">Manage account settings and track every label created.</p>
       </div>
     </div>
+    {{if eq .Widgets 2}}
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-target="postoffice-panel" type="button">Post Office Finder</button>
+    </div>
+    {{else}}
     <div class="tabs" role="tablist">
       <button class="tab {{if eq .ActiveTab "settings"}}active{{end}}" data-target="settings-panel" type="button">Canada Post Account Settings</button>
-      <button class="tab {{if eq .ActiveTab "postoffice"}}active{{end}}" data-target="postoffice-panel" type="button">Post Office Finder</button>
       <button class="tab {{if eq .ActiveTab "labels"}}active{{end}}" data-target="labels-panel" type="button">Created Labels</button>
     </div>
+    {{end}}
 
+    {{if ne .Widgets 2}}
     <div class="card panel {{if eq .ActiveTab "settings"}}active{{end}}" id="settings-panel">
       <h1>Canada Post Account Settings</h1>
       <form method="post" action="/settings?client_id={{.ClientID}}">
@@ -1236,12 +1277,15 @@ const settingsHTML = `<!doctype html>
         </div>
       </div>
     </div>
+    {{end}}
 
+    {{if eq .Widgets 2}}
     <div class="card panel {{if eq .ActiveTab "postoffice"}}active{{end}}" id="postoffice-panel" style="margin-top:20px;">
       <h1>Post Office Finder</h1>
       <p class="hint" style="margin:0 0 14px;">Cache nearby Canada Post offices by postal code. Saved results are reused automatically.</p>
       <form method="post" action="/settings?client_id={{.ClientID}}">
         <input type="hidden" name="session_token" value="{{.SessionToken}}">
+        {{if .Widgets}}<input type="hidden" name="widgets" value="{{.Widgets}}">{{end}}
         <input type="hidden" name="form_type" value="postoffice_search">
         <label for="postal_code">Postal Code</label>
         <input id="postal_code" name="postal_code" type="text" placeholder="M5H 2N2" required>
@@ -1262,12 +1306,14 @@ const settingsHTML = `<!doctype html>
                 <div style="display:flex; gap:8px; align-items:center;">
                   <form method="post" action="/settings?client_id={{.ClientID}}">
                     <input type="hidden" name="session_token" value="{{.SessionToken}}">
+                    {{if .Widgets}}<input type="hidden" name="widgets" value="{{.Widgets}}">{{end}}
                     <input type="hidden" name="form_type" value="postoffice_default">
                     <input type="hidden" name="postal_code" value="{{.DefaultPostal}}">
                     <button class="button-ghost default is-default" type="submit">Default</button>
                   </form>
                   <form method="post" action="/settings?client_id={{.ClientID}}">
                     <input type="hidden" name="session_token" value="{{.SessionToken}}">
+                    {{if .Widgets}}<input type="hidden" name="widgets" value="{{.Widgets}}">{{end}}
                     <input type="hidden" name="form_type" value="postoffice_delete">
                     <input type="hidden" name="postal_code" value="{{.DefaultPostal}}">
                     <button class="button-ghost remove" type="submit">Remove</button>
@@ -1285,12 +1331,14 @@ const settingsHTML = `<!doctype html>
                 <div style="display:flex; gap:8px; align-items:center;">
                   <form method="post" action="/settings?client_id={{$.ClientID}}">
                     <input type="hidden" name="session_token" value="{{$.SessionToken}}">
+                    {{if $.Widgets}}<input type="hidden" name="widgets" value="{{$.Widgets}}">{{end}}
                     <input type="hidden" name="form_type" value="postoffice_default">
                     <input type="hidden" name="postal_code" value="{{.}}">
                     <button class="button-ghost default" type="submit">Default</button>
                   </form>
                   <form method="post" action="/settings?client_id={{$.ClientID}}">
                     <input type="hidden" name="session_token" value="{{$.SessionToken}}">
+                    {{if $.Widgets}}<input type="hidden" name="widgets" value="{{$.Widgets}}">{{end}}
                     <input type="hidden" name="form_type" value="postoffice_delete">
                     <input type="hidden" name="postal_code" value="{{.}}">
                     <button class="button-ghost remove" type="submit">Remove</button>
@@ -1304,10 +1352,10 @@ const settingsHTML = `<!doctype html>
             <div class="hint">Page {{.PostalPage}}</div>
             <div class="actions" style="margin-top: 0;">
               {{if .PostalHasPrev}}
-                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{dec .PostalPage}}&postal_page_size={{.PostalPageSize}}">Previous</a>
+                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{dec .PostalPage}}&postal_page_size={{.PostalPageSize}}{{if .Widgets}}&widgets={{.Widgets}}{{end}}">Previous</a>
               {{end}}
               {{if .PostalHasNext}}
-                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{inc .PostalPage}}&postal_page_size={{.PostalPageSize}}">Next</a>
+                <a class="button-link" href="/settings?client_id={{.ClientID}}&session_token={{.SessionToken}}&tab=postoffice&postal_page={{inc .PostalPage}}&postal_page_size={{.PostalPageSize}}{{if .Widgets}}&widgets={{.Widgets}}{{end}}">Next</a>
               {{end}}
             </div>
           </div>
@@ -1316,7 +1364,9 @@ const settingsHTML = `<!doctype html>
         {{end}}
       </div>
     </div>
+    {{end}}
 
+    {{if ne .Widgets 2}}
     <div class="card panel {{if eq .ActiveTab "labels"}}active{{end}}" id="labels-panel" style="margin-top:20px;">
       <h1>Created Labels</h1>
       <form method="get" action="/settings" class="filters">
@@ -1390,6 +1440,7 @@ const settingsHTML = `<!doctype html>
         </div>
       </div>
     </div>
+    {{end}}
   </div>
   <script>
     const tabs = document.querySelectorAll('.tab');
