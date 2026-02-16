@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -63,6 +64,7 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("RefreshToken:", refresh)
 
 		if strings.TrimSpace(access) != "" {
+			a.syncAdminShippingMethods(r.Context(), int64(storeID), access)
 			oneTime, err := a.createSessionToken(int64(storeID), 2*time.Minute)
 			if err != nil {
 				http.Error(w, "Failed to create session token", http.StatusInternalServerError)
@@ -143,6 +145,7 @@ func (a *App) callback(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("✅ AccessToken:", tokenResp.AccessToken)
 		fmt.Println("✅ RefreshToken:", service.GetStringValue(tokenResp.RefreshToken))
 		fmt.Println("⏰ Expires In:", int(time.Until(tokenResp.Expiry).Seconds()))
+		a.syncAdminShippingMethods(r.Context(), int64(storeID), tokenResp.AccessToken)
 
 		oneTime, err := a.createSessionToken(int64(storeID), 2*time.Minute)
 		if err != nil {
@@ -810,6 +813,32 @@ func (a *App) redirectToOAuth(w http.ResponseWriter, _ *http.Request, clientID i
   <script>window.top.location.href = "%s";</script>
 </body>
 </html>`, authURL, authURL)
+}
+
+func (a *App) syncAdminShippingMethods(ctx context.Context, clientID int64, accessToken string) {
+	if a == nil {
+		return
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	if clientID <= 0 || accessToken == "" {
+		return
+	}
+
+	targetGRPCAddr := strings.TrimSpace(a.Config.OrdersGRPCAddr)
+	if targetGRPCAddr == "" {
+		targetGRPCAddr = strings.TrimSpace(a.Config.GRPCAddr)
+	}
+	if targetGRPCAddr == "" {
+		log.Printf("shipping methods sync skipped: grpc address not configured for store %d", clientID)
+		return
+	}
+
+	created, err := service.EnsureCanadaPostAdminShippingMethods(ctx, targetGRPCAddr, clientID, accessToken)
+	if err != nil {
+		log.Printf("shipping methods sync failed for store %d: %v", clientID, err)
+		return
+	}
+	log.Printf("shipping methods sync completed for store %d: created=%d", clientID, created)
 }
 
 func renderSettingsPage(w http.ResponseWriter, data settingsPageData) {

@@ -7,12 +7,8 @@ type RateRequest struct {
 	XMLNS                 string   `xml:"xmlns,attr"`
 	CustomerNumber        string   `xml:"customer-number,omitempty"`
 	ParcelCharacteristics struct {
-		Weight     float64 `xml:"weight"`
-		Dimensions struct {
-			Length float64 `xml:"length"`
-			Width  float64 `xml:"width"`
-			Height float64 `xml:"height"`
-		} `xml:"dimensions,omitempty"`
+		Weight     float64     `xml:"weight"`
+		Dimensions *Dimensions `xml:"dimensions,omitempty"`
 	} `xml:"parcel-characteristics"`
 	OriginPostalCode string `xml:"origin-postal-code"`
 	Destination      struct {
@@ -145,12 +141,8 @@ type ShipmentRequest struct {
 		} `xml:"destination"`
 
 		ParcelCharacteristics struct {
-			Weight     float64 `xml:"weight"`
-			Dimensions struct {
-				Length float64 `xml:"length"`
-				Width  float64 `xml:"width"`
-				Height float64 `xml:"height"`
-			} `xml:"dimensions"`
+			Weight     float64     `xml:"weight"`
+			Dimensions *Dimensions `xml:"dimensions,omitempty"`
 		} `xml:"parcel-characteristics"`
 
 		Notification *ShipmentNotification `xml:"notification,omitempty"`
@@ -162,6 +154,12 @@ type ShipmentRequest struct {
 		Options *ShipmentOptions `xml:"options,omitempty"`
 		Customs *ShipmentCustoms `xml:"customs,omitempty"`
 	} `xml:"delivery-spec"`
+}
+
+type Dimensions struct {
+	Length float64 `xml:"length"`
+	Width  float64 `xml:"width"`
+	Height float64 `xml:"height"`
 }
 
 type ShipmentOptions struct {

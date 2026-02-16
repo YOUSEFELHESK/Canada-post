@@ -160,11 +160,14 @@ func logRequestDetails(_ *shippingpluginpb.ShippingRateRequest, rates []*shippin
 	}
 
 	for _, rate := range rates {
-		log.Printf("rate: id=%s carrier=%s service=%s price=%d\n",
+		log.Printf("rate: id=%s carrier=%s service=%s price=%d eta_days=%d eta_date=%s guaranteed=%v\n",
 			rate.GetShippingrateId(),
 			rate.GetShippingrateCarrierName(),
 			rate.GetShippingrateServiceName(),
 			rate.GetShippingratePrice(),
+			rate.GetShippingrateDeliveryDays(),
+			rate.GetShippingrateDeliveryDate(),
+			rate.GetShippingrateDeliveryDateGuaranteed(),
 		)
 	}
 }
@@ -294,10 +297,12 @@ type parcelMetrics struct {
 }
 
 type rateCandidate struct {
-	ServiceCode  string
-	ServiceName  string
-	PriceCents   int64
-	DeliveryDate string
+	ServiceCode            string
+	ServiceName            string
+	PriceCents             int64
+	DeliveryDate           string
+	DeliveryDays           uint32
+	DeliveryDateGuaranteed bool
 }
 
 const ouncesPerKilogram = 35.27396195
@@ -307,6 +312,10 @@ func ouncesToKilograms(ounces float64) float64 {
 		return 0
 	}
 	return math.Round(ounces/ouncesPerKilogram*100) / 100
+}
+
+func hasPositiveDimensions(length, width, height float64) bool {
+	return length > 0 && width > 0 && height > 0
 }
 
 func buildParcelsFromLabelRequest(parcel *labels.Parcel) (parcelMetrics, error) {
@@ -398,10 +407,12 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 	}
 	payload.OriginPostalCode = origin.PostalCode
 	payload.ParcelCharacteristics.Weight = parcel.Weight
-	if parcel.Length > 0 || parcel.Width > 0 || parcel.Height > 0 {
-		payload.ParcelCharacteristics.Dimensions.Length = parcel.Length
-		payload.ParcelCharacteristics.Dimensions.Width = parcel.Width
-		payload.ParcelCharacteristics.Dimensions.Height = parcel.Height
+	if hasPositiveDimensions(parcel.Length, parcel.Width, parcel.Height) {
+		payload.ParcelCharacteristics.Dimensions = &Dimensions{
+			Length: parcel.Length,
+			Width:  parcel.Width,
+			Height: parcel.Height,
+		}
 	}
 	country := strings.ToUpper(strings.TrimSpace(dest.Country))
 	switch country {
@@ -507,10 +518,13 @@ func (s *Server) fetchRatesFromAPI(ctx context.Context, req *shippingpluginpb.Sh
 		storeRatePrice(rateID, candidate.PriceCents)
 
 		rates = append(rates, &shippingpluginpb.ShippingRate{
-			ShippingrateId:          rateID,
-			ShippingrateCarrierName: "Canada Post",
-			ShippingrateServiceName: candidate.ServiceName,
-			ShippingratePrice:       uint32(displayPriceCents),
+			ShippingrateId:                     rateID,
+			ShippingrateCarrierName:            "Canada Post",
+			ShippingrateServiceName:            candidate.ServiceName,
+			ShippingratePrice:                  uint32(displayPriceCents),
+			ShippingrateDeliveryDays:           candidate.DeliveryDays,
+			ShippingrateDeliveryDate:           candidate.DeliveryDate,
+			ShippingrateDeliveryDateGuaranteed: candidate.DeliveryDateGuaranteed,
 		})
 	}
 	return rates, nil
@@ -545,11 +559,20 @@ func mapAPIRates(apiRates *RateResponse) []rateCandidate {
 		if serviceName == "" {
 			serviceName = fallbackServiceName(rate.ServiceCode)
 		}
+		deliveryDate := strings.TrimSpace(rate.ServiceStandard.ExpectedDeliveryDate)
+		deliveryDays := uint32(0)
+		if rate.ServiceStandard.ExpectedTransitTime > 0 {
+			deliveryDays = uint32(rate.ServiceStandard.ExpectedTransitTime)
+		} else {
+			deliveryDays = deliveryDaysFromDeliveryDate(&deliveryDate)
+		}
 		rates = append(rates, rateCandidate{
-			ServiceCode:  strings.TrimSpace(rate.ServiceCode),
-			ServiceName:  serviceName,
-			PriceCents:   priceCents,
-			DeliveryDate: strings.TrimSpace(rate.ServiceStandard.ExpectedDeliveryDate),
+			ServiceCode:            strings.TrimSpace(rate.ServiceCode),
+			ServiceName:            serviceName,
+			PriceCents:             priceCents,
+			DeliveryDate:           deliveryDate,
+			DeliveryDays:           deliveryDays,
+			DeliveryDateGuaranteed: rate.ServiceStandard.GuaranteedDelivery,
 		})
 	}
 	return rates
@@ -779,9 +802,13 @@ func buildShipmentRequest(origin canadaPostOrigin, dest canadaPostDestination, p
 	payload.DeliverySpec.Destination.AddressDetails.PostalCode = defaultValue(dest.PostalCode, "")
 
 	payload.DeliverySpec.ParcelCharacteristics.Weight = parcel.Weight
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Length = parcel.Length
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Width = parcel.Width
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Height = parcel.Height
+	if hasPositiveDimensions(parcel.Length, parcel.Width, parcel.Height) {
+		payload.DeliverySpec.ParcelCharacteristics.Dimensions = &Dimensions{
+			Length: parcel.Length,
+			Width:  parcel.Width,
+			Height: parcel.Height,
+		}
+	}
 	payload.DeliverySpec.Preferences.ShowPackingInstructions = true
 	return payload
 }
@@ -819,9 +846,13 @@ func buildShipmentRequestFromSnapshot(snapshot RateSnapshot, destCountry string,
 	payload.DeliverySpec.Destination.AddressDetails.PostalCode = defaultValue(snapshot.Customer.Zip, snapshot.Destination.PostalCode)
 
 	payload.DeliverySpec.ParcelCharacteristics.Weight = snapshot.Parcel.Weight
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Length = snapshot.Parcel.Length
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Width = snapshot.Parcel.Width
-	payload.DeliverySpec.ParcelCharacteristics.Dimensions.Height = snapshot.Parcel.Height
+	if hasPositiveDimensions(snapshot.Parcel.Length, snapshot.Parcel.Width, snapshot.Parcel.Height) {
+		payload.DeliverySpec.ParcelCharacteristics.Dimensions = &Dimensions{
+			Length: snapshot.Parcel.Length,
+			Width:  snapshot.Parcel.Width,
+			Height: snapshot.Parcel.Height,
+		}
+	}
 	if notification != nil {
 		payload.DeliverySpec.Notification = notification
 	}
