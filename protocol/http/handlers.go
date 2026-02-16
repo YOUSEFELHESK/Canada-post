@@ -1079,6 +1079,43 @@ const settingsHTML = `<!doctype html>
       font-size: 12px;
       color: var(--muted);
     }
+    .danger-zone {
+      margin-top: 26px;
+      border: 1px solid rgba(220, 38, 38, 0.35);
+      background: #fff5f5;
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .danger-zone h2 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      color: #991b1b;
+    }
+    .danger-zone p {
+      margin: 0 0 8px;
+      color: #7f1d1d;
+      font-size: 13px;
+    }
+    .danger-zone ul {
+      margin: 8px 0 12px 18px;
+      padding: 0;
+      color: #7f1d1d;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .danger-button {
+      border: 0;
+      background: #dc2626;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 10px 20px rgba(220, 38, 38, 0.22);
+    }
+    .danger-button:hover {
+      background: #b91c1c;
+    }
     .message {
       margin-top: 12px;
       color: #0f766e;
@@ -1275,6 +1312,19 @@ const settingsHTML = `<!doctype html>
             <div class="empty">No currency rates configured.</div>
           {{end}}
         </div>
+      </div>
+      <div class="danger-zone">
+        <h2>Danger Zone</h2>
+        <p>Uninstalling this plugin will:</p>
+        <ul>
+          <li>remove Canada Post shipping methods from your store</li>
+          <li>delete local plugin configuration and OAuth credentials</li>
+          <li>require reinstallation to use Canada Post again</li>
+        </ul>
+        <form method="post" action="/uninstall?client_id={{.ClientID}}" onsubmit="return confirm('Are you sure you want to uninstall Canada Post plugin? This action cannot be undone.');">
+          <input type="hidden" name="session_token" value="{{.SessionToken}}">
+          <button class="danger-button" type="submit">Uninstall Plugin</button>
+        </form>
       </div>
     </div>
     {{end}}

@@ -4,7 +4,9 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -85,4 +87,81 @@ func (s *Store) GetRefreshToken(storeID int) string {
 func hashState(state string) string {
 	hash := md5.Sum([]byte(state))
 	return hex.EncodeToString(hash[:])
+}
+
+// CleanupPluginData removes local plugin data for a store after uninstall.
+func (s *Store) CleanupPluginData(storeID int64) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("store is not configured")
+	}
+	if storeID <= 0 {
+		return fmt.Errorf("store id is required")
+	}
+
+	log.Printf("cleaning up plugin data for store %d", storeID)
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to start cleanup transaction: %w", err)
+	}
+
+	rollback := func() {
+		_ = tx.Rollback()
+	}
+
+	deleteStep := func(stepName string, query string, args ...any) error {
+		result, execErr := tx.Exec(query, args...)
+		if execErr != nil {
+			if isMissingTableError(execErr) {
+				log.Printf("cleanup skipped (%s): table missing", stepName)
+				return nil
+			}
+			return fmt.Errorf("%s: %w", stepName, execErr)
+		}
+		affected, _ := result.RowsAffected()
+		log.Printf("cleanup step %s: %d rows deleted", stepName, affected)
+		return nil
+	}
+
+	if err := deleteStep("delete plugin_oauth", "DELETE FROM plugin_oauth WHERE client_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+	if err := deleteStep("delete oauth_tokens", "DELETE FROM oauth_tokens WHERE store_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+	if err := deleteStep("delete oauth_state", "DELETE FROM oauth_state WHERE store_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+	if err := deleteStep("delete shipping_settings", "DELETE FROM shipping_settings WHERE client_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+	if err := deleteStep("delete currency_rates", "DELETE FROM currency_rates WHERE client_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+	if err := deleteStep("delete client_post_offices", "DELETE FROM client_post_offices WHERE client_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		rollback()
+		return fmt.Errorf("failed to commit cleanup transaction: %w", err)
+	}
+
+	log.Printf("cleanup completed for store %d", storeID)
+	return nil
+}
+
+func isMissingTableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "doesn't exist") ||
+		strings.Contains(errStr, "no such table") ||
+		strings.Contains(errStr, "unknown table")
 }

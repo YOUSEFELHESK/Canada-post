@@ -86,6 +86,7 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/callback", a.callback)
 	mux.HandleFunc("/callkey", a.callkey)
 	mux.HandleFunc("/settings", a.settingsHandler)
+	mux.HandleFunc("/uninstall", a.HandleUninstall)
 	mux.HandleFunc("/labels/", a.labelHandler)
 	mux.Handle(
 		"/files/postage_label/",
