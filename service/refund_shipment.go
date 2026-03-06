@@ -9,8 +9,8 @@ import (
 
 	orderspb "bitbucket.org/lexmodo/proto/orders"
 	shippingpluginpb "bitbucket.org/lexmodo/proto/shipping_plugin"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -45,7 +45,20 @@ func (s *Server) RefundShipment(
 		}, nil
 	}
 
-	record, err := s.Store.LoadLabelRecordByLabelID(labelID)
+	clientID := int64(0)
+	if req.GetShippingAuth() != nil && req.GetShippingAuth().GetStoreInfo() != nil {
+		clientID = int64(req.GetShippingAuth().GetStoreInfo().GetClientId())
+	}
+	if clientID <= 0 {
+		return &shippingpluginpb.ResultResponse{
+			Success: false,
+			Failure: true,
+			Code:    "400",
+			Message: "RefundShipment missing store_id",
+		}, nil
+	}
+
+	record, err := s.Store.LoadLabelRecordByLabelID(clientID, labelID)
 	if err != nil {
 		log.Println("❌ Failed to load label record:", err)
 		return &shippingpluginpb.ResultResponse{
@@ -82,10 +95,6 @@ func (s *Server) RefundShipment(
 
 	log.Printf("refund shipment label_id=%s invoice_uuid=%s refund_link=%s", labelID, record.InvoiceUUID, record.RefundLink)
 
-	clientID := int64(0)
-	if req.GetShippingAuth() != nil && req.GetShippingAuth().GetStoreInfo() != nil {
-		clientID = int64(req.GetShippingAuth().GetStoreInfo().GetClientId())
-	}
 	ordersToken := ""
 	if clientID > 0 {
 		ordersToken = strings.TrimSpace(s.Store.GetAccessToken(int(clientID)))

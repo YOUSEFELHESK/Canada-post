@@ -2,29 +2,31 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
 )
 
 type Config struct {
-	Port         string
-	GRPCAddr     string
-	AppClientID  string
-	AppSecret    string
-	RedirectURI  string
-	AuthorizeURL string
-	TokenURL     string
-	DBUser       string
-	DBPass       string
-	DBHost       string
-	DBName       string
+	Port           string
+	GRPCAddr       string
+	AppClientID    string
+	AppSecret      string
+	RedirectURI    string
+	AuthorizeURL   string
+	AdminOrdersURL string
+	TokenURL       string
+	DBUser         string
+	DBPass         string
+	DBHost         string
+	DBName         string
 
-	PublicBaseURL  string
-	OrdersGRPCAddr string
+	PublicBaseURL    string
+	OrdersGRPCAddr   string
 	LabelStoragePath string
-	CanadaPost     CanadaPostConfig
-	Redis          RedisConfig
+	CanadaPost       CanadaPostConfig
+	Redis            RedisConfig
 }
 
 type CanadaPostConfig struct {
@@ -51,22 +53,24 @@ func LoadConfig() Config {
 
 	setDefaults(v)
 	_ = v.ReadInConfig()
+	applyRuntimeEnvOverrides(v)
 
 	return Config{
-		Port:         v.GetString("server.port"),
-		GRPCAddr:     v.GetString("server.grpc_addr"),
-		AppClientID:  v.GetString("oauth.app_client_id"),
-		AppSecret:    v.GetString("oauth.app_secret"),
-		RedirectURI:  v.GetString("oauth.redirect_uri"),
-		AuthorizeURL: v.GetString("oauth.authorize_url"),
-		TokenURL:     v.GetString("oauth.token_url"),
-		DBUser:       v.GetString("database.user"),
-		DBPass:       v.GetString("database.pass"),
-		DBHost:       v.GetString("database.host"),
-		DBName:       v.GetString("database.name"),
+		Port:           v.GetString("server.port"),
+		GRPCAddr:       v.GetString("server.grpc_addr"),
+		AppClientID:    v.GetString("oauth.app_client_id"),
+		AppSecret:      v.GetString("oauth.app_secret"),
+		RedirectURI:    v.GetString("oauth.redirect_uri"),
+		AuthorizeURL:   v.GetString("oauth.authorize_url"),
+		AdminOrdersURL: v.GetString("admin.orders_url"),
+		TokenURL:       v.GetString("oauth.token_url"),
+		DBUser:         v.GetString("database.user"),
+		DBPass:         v.GetString("database.pass"),
+		DBHost:         v.GetString("database.host"),
+		DBName:         v.GetString("database.name"),
 
-		PublicBaseURL:  v.GetString("server.public_base_url"),
-		OrdersGRPCAddr: v.GetString("orders.grpc_addr"),
+		PublicBaseURL:    v.GetString("server.public_base_url"),
+		OrdersGRPCAddr:   v.GetString("orders.grpc_addr"),
 		LabelStoragePath: v.GetString("labels.storage_path"),
 		CanadaPost: CanadaPostConfig{
 			BaseURL:        v.GetString("canadapost.base_url"),
@@ -97,6 +101,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", "50050")
 	v.SetDefault("server.grpc_addr", "0.0.0.0:50051")
 	v.SetDefault("server.public_base_url", "")
+	v.SetDefault("admin.orders_url", "")
 	v.SetDefault("labels.storage_path", "files/labels")
 
 	// Canada Post
@@ -116,9 +121,50 @@ func setDefaults(v *viper.Viper) {
 	_ = v.BindEnv("canadapost.customer_number", "CANADA_POST_CUSTOMER_NUMBER", "CANADAPOST_CUSTOMER_NUMBER")
 	_ = v.BindEnv("canadapost.username", "CANADA_POST_USERNAME", "CANADAPOST_USERNAME")
 	_ = v.BindEnv("canadapost.password", "CANADA_POST_PASSWORD", "CANADAPOST_PASSWORD")
+	_ = v.BindEnv("admin.orders_url", "ADMIN_ORDERS_URL")
 	_ = v.BindEnv("labels.storage_path", "LABEL_STORAGE_PATH")
 	_ = v.BindEnv("redis.addr", "REDIS_ADDR")
 	_ = v.BindEnv("redis.password", "REDIS_PASSWORD")
 	_ = v.BindEnv("redis.db", "REDIS_DB")
 	_ = v.BindEnv("redis.rate_session_ttl_minutes", "REDIS_RATE_SESSION_TTL_MINUTES")
+}
+
+func applyRuntimeEnvOverrides(v *viper.Viper) {
+	setRuntimeEnvOverride(v, "admin.orders_url", "ADMIN_ORDERS_URL")
+}
+
+func setRuntimeEnvOverride(v *viper.Viper, configKey string, envBase string) {
+	if v == nil {
+		return
+	}
+
+	if value := strings.TrimSpace(os.Getenv(envBase)); value != "" {
+		v.Set(configKey, value)
+		return
+	}
+
+	runtime := strings.ToLower(strings.TrimSpace(os.Getenv("APP_RUNTIME")))
+	if runtime == "" {
+		runtime = strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	}
+
+	switch runtime {
+	case "dev", "development", "local", "test":
+		if value := strings.TrimSpace(os.Getenv(envBase + "_DEV")); value != "" {
+			v.Set(configKey, value)
+		}
+	case "live", "prod", "production":
+		if value := strings.TrimSpace(os.Getenv(envBase + "_LIVE")); value != "" {
+			v.Set(configKey, value)
+		}
+	default:
+		dev := strings.TrimSpace(os.Getenv(envBase + "_DEV"))
+		live := strings.TrimSpace(os.Getenv(envBase + "_LIVE"))
+		if dev != "" && live == "" {
+			v.Set(configKey, dev)
+		}
+		if live != "" && dev == "" {
+			v.Set(configKey, live)
+		}
+	}
 }

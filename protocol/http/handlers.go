@@ -430,6 +430,7 @@ var currencyOptions = []currencyOption{
 
 type settingsPageData struct {
 	ClientID        int64
+	AdminOrdersURL  string
 	AccountNumber   string
 	Services        []serviceOption
 	Enabled         map[string]bool
@@ -684,7 +685,7 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	page := parsePage(r.URL.Query().Get("page"))
 	pageSize := parsePageSize(r.URL.Query().Get("page_size"))
 	offset := (page - 1) * pageSize
-	labels, hasNext, err := a.Store.LoadLabelRecordsPage(fromDate, toDate, pageSize, offset)
+	labels, hasNext, err := a.Store.LoadLabelRecordsPage(clientID, fromDate, toDate, pageSize, offset)
 	if err != nil {
 		log.Println("failed to load label records:", err)
 		http.Error(w, "failed to load labels", http.StatusInternalServerError)
@@ -693,6 +694,7 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 
 	data := settingsPageData{
 		ClientID:       clientID,
+		AdminOrdersURL: a.adminOrdersURL(),
 		AccountNumber:  settings.AccountNumber,
 		Services:       serviceOptions,
 		Enabled:        settings.EnabledServices,
@@ -732,6 +734,22 @@ func (a *App) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	renderSettingsPage(w, data)
+}
+
+func (a *App) adminOrdersURL() string {
+	if a == nil {
+		return ""
+	}
+	ordersURL := strings.TrimSpace(a.Config.AdminOrdersURL)
+	if ordersURL == "" {
+		return ""
+	}
+	u, err := url.Parse(ordersURL)
+	if err != nil || strings.TrimSpace(u.Scheme) == "" || strings.TrimSpace(u.Host) == "" {
+		return ""
+	}
+	baseURL := u.Scheme + "://" + u.Host + strings.TrimSpace(u.Path)
+	return strings.TrimRight(baseURL, "/")
 }
 
 func (a *App) allowEmbeddedFromAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -1480,8 +1498,10 @@ const settingsHTML = `<!doctype html>
               {{range .Labels}}
               <tr>
                 <td>
-                  {{if .InvoiceUUID}}
-                    <a href="https://devadmin.lexmodo.com/orders/{{.InvoiceUUID}}" target="_blank" rel="noopener">{{.InvoiceUUID}}</a>
+                  {{if and $.AdminOrdersURL .InvoiceUUID}}
+                    <a href="{{$.AdminOrdersURL}}/orders/{{.InvoiceUUID}}" target="_blank" rel="noopener">{{.InvoiceUUID}}</a>
+                  {{else if .InvoiceUUID}}
+                    {{.InvoiceUUID}}
                   {{else}}
                     -
                   {{end}}

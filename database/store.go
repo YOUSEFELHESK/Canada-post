@@ -120,6 +120,7 @@ func (s *Store) ensureLabelRecordsTable() error {
 	_, err := s.DB.Exec(`
 		CREATE TABLE IF NOT EXISTS label_records (
 			id VARCHAR(64) PRIMARY KEY,
+			store_id BIGINT NOT NULL DEFAULT 0,
 			shipment_id VARCHAR(64) NOT NULL,
 			tracking_number VARCHAR(64) NOT NULL,
 			invoice_uuid VARCHAR(255) NOT NULL DEFAULT '',
@@ -176,6 +177,7 @@ func (s *Store) ensureLabelRecordColumns() error {
 		name string
 		def  string
 	}{
+		{name: "store_id", def: "store_id BIGINT NOT NULL DEFAULT 0"},
 		{name: "invoice_uuid", def: "invoice_uuid VARCHAR(255) NOT NULL DEFAULT ''"},
 		{name: "rate_id", def: "rate_id VARCHAR(255) NOT NULL DEFAULT ''"},
 		{name: "carrier", def: "carrier VARCHAR(64) NOT NULL DEFAULT ''"},
@@ -191,6 +193,61 @@ func (s *Store) ensureLabelRecordColumns() error {
 			continue
 		}
 		if _, err := s.DB.Exec("ALTER TABLE label_records ADD COLUMN " + col.def); err != nil {
+			return err
+		}
+	}
+	return s.ensureLabelRecordIndexes(dbName)
+}
+
+func (s *Store) ensureLabelRecordIndexes(dbName string) error {
+	rows, err := s.DB.Query(`
+		SELECT DISTINCT index_name
+		FROM information_schema.statistics
+		WHERE table_schema = ? AND table_name = 'label_records'
+	`, dbName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existing := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		existing[strings.ToLower(name)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	indexes := []struct {
+		name string
+		ddl  string
+	}{
+		{
+			name: "idx_label_records_store",
+			ddl:  "CREATE INDEX idx_label_records_store ON label_records (store_id)",
+		},
+		{
+			name: "idx_label_records_store_created",
+			ddl:  "CREATE INDEX idx_label_records_store_created ON label_records (store_id, created_at)",
+		},
+		{
+			name: "idx_label_records_store_shipment_created",
+			ddl:  "CREATE INDEX idx_label_records_store_shipment_created ON label_records (store_id, shipment_id, created_at)",
+		},
+		{
+			name: "idx_label_records_store_invoice_created",
+			ddl:  "CREATE INDEX idx_label_records_store_invoice_created ON label_records (store_id, invoice_uuid, created_at)",
+		},
+	}
+	for _, idx := range indexes {
+		if existing[idx.name] {
+			continue
+		}
+		if _, err := s.DB.Exec(idx.ddl); err != nil {
 			return err
 		}
 	}
@@ -331,6 +388,7 @@ func (s *Store) LoadLatestTrackingNumber() (string, error) {
 
 type LabelRecord struct {
 	ID                   string
+	StoreID              int64
 	ShipmentID           string
 	TrackingNumber       string
 	InvoiceUUID          string
@@ -350,6 +408,7 @@ func (s *Store) SaveLabelRecord(record LabelRecord) error {
 	_, err := s.DB.Exec(`
 		INSERT INTO label_records (
 			id,
+			store_id,
 			shipment_id,
 			tracking_number,
 			invoice_uuid,
@@ -362,17 +421,20 @@ func (s *Store) SaveLabelRecord(record LabelRecord) error {
 			delivery_days,
 			refund_link,
 			weight
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, record.ID, record.ShipmentID, record.TrackingNumber, record.InvoiceUUID, record.RateID, record.Carrier, record.ServiceCode, record.ServiceName, record.ShippingChargesCents, record.DeliveryDate, record.DeliveryDays, record.RefundLink, record.Weight)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, record.ID, record.StoreID, record.ShipmentID, record.TrackingNumber, record.InvoiceUUID, record.RateID, record.Carrier, record.ServiceCode, record.ServiceName, record.ShippingChargesCents, record.DeliveryDate, record.DeliveryDays, record.RefundLink, record.Weight)
 	return err
 }
 
-func (s *Store) LoadLabelRecords(fromDate string, toDate string, limit int) ([]LabelRecord, error) {
-	records, _, err := s.LoadLabelRecordsPage(fromDate, toDate, limit, 0)
+func (s *Store) LoadLabelRecords(storeID int64, fromDate string, toDate string, limit int) ([]LabelRecord, error) {
+	records, _, err := s.LoadLabelRecordsPage(storeID, fromDate, toDate, limit, 0)
 	return records, err
 }
 
-func (s *Store) LoadLabelRecordsPage(fromDate string, toDate string, limit int, offset int) ([]LabelRecord, bool, error) {
+func (s *Store) LoadLabelRecordsPage(storeID int64, fromDate string, toDate string, limit int, offset int) ([]LabelRecord, bool, error) {
+	if storeID <= 0 {
+		return []LabelRecord{}, false, nil
+	}
 	if limit <= 0 {
 		limit = 10
 	}
@@ -380,12 +442,12 @@ func (s *Store) LoadLabelRecordsPage(fromDate string, toDate string, limit int, 
 		offset = 0
 	}
 	query := `
-		SELECT id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
+		SELECT id, store_id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
 		FROM label_records
 	`
 	args := []any{}
-	clauses := []string{"(carrier = ? OR carrier = '')"}
-	args = append(args, "Canada Post")
+	clauses := []string{"store_id = ?", "(carrier = ? OR carrier = '')"}
+	args = append(args, storeID, "Canada Post")
 	if strings.TrimSpace(fromDate) != "" {
 		clauses = append(clauses, "created_at >= ?")
 		args = append(args, fromDate+" 00:00:00")
@@ -412,6 +474,7 @@ func (s *Store) LoadLabelRecordsPage(fromDate string, toDate string, limit int, 
 		var refundLink sql.NullString
 		if err := rows.Scan(
 			&rec.ID,
+			&rec.StoreID,
 			&rec.ShipmentID,
 			&rec.TrackingNumber,
 			&rec.InvoiceUUID,
@@ -444,7 +507,10 @@ func (s *Store) LoadLabelRecordsPage(fromDate string, toDate string, limit int, 
 	return records, hasNext, nil
 }
 
-func (s *Store) LoadRefundLinkByLabelID(labelID string) (string, error) {
+func (s *Store) LoadRefundLinkByLabelID(storeID int64, labelID string) (string, error) {
+	if storeID <= 0 {
+		return "", nil
+	}
 	labelID = strings.TrimSpace(labelID)
 	if labelID == "" {
 		return "", nil
@@ -453,16 +519,19 @@ func (s *Store) LoadRefundLinkByLabelID(labelID string) (string, error) {
 	err := s.DB.QueryRow(`
 		SELECT refund_link
 		FROM label_records
-		WHERE id = ?
+		WHERE store_id = ? AND id = ?
 		LIMIT 1
-	`, labelID).Scan(&link)
+	`, storeID, labelID).Scan(&link)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return strings.TrimSpace(link), err
 }
 
-func (s *Store) LoadRefundLinkByShipmentID(shipmentID string) (string, error) {
+func (s *Store) LoadRefundLinkByShipmentID(storeID int64, shipmentID string) (string, error) {
+	if storeID <= 0 {
+		return "", nil
+	}
 	shipmentID = strings.TrimSpace(shipmentID)
 	if shipmentID == "" {
 		return "", nil
@@ -471,17 +540,20 @@ func (s *Store) LoadRefundLinkByShipmentID(shipmentID string) (string, error) {
 	err := s.DB.QueryRow(`
 		SELECT refund_link
 		FROM label_records
-		WHERE shipment_id = ?
+		WHERE store_id = ? AND shipment_id = ?
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, shipmentID).Scan(&link)
+	`, storeID, shipmentID).Scan(&link)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return strings.TrimSpace(link), err
 }
 
-func (s *Store) LoadRefundLinkByInvoiceUUID(invoiceUUID string) (string, error) {
+func (s *Store) LoadRefundLinkByInvoiceUUID(storeID int64, invoiceUUID string) (string, error) {
+	if storeID <= 0 {
+		return "", nil
+	}
 	invoiceUUID = strings.TrimSpace(invoiceUUID)
 	if invoiceUUID == "" {
 		return "", nil
@@ -490,17 +562,20 @@ func (s *Store) LoadRefundLinkByInvoiceUUID(invoiceUUID string) (string, error) 
 	err := s.DB.QueryRow(`
 		SELECT refund_link
 		FROM label_records
-		WHERE invoice_uuid = ?
+		WHERE store_id = ? AND invoice_uuid = ?
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, invoiceUUID).Scan(&link)
+	`, storeID, invoiceUUID).Scan(&link)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return strings.TrimSpace(link), err
 }
 
-func (s *Store) LoadLabelRecordByLabelID(labelID string) (LabelRecord, error) {
+func (s *Store) LoadLabelRecordByLabelID(storeID int64, labelID string) (LabelRecord, error) {
+	if storeID <= 0 {
+		return LabelRecord{}, nil
+	}
 	labelID = strings.TrimSpace(labelID)
 	if labelID == "" {
 		return LabelRecord{}, nil
@@ -508,12 +583,13 @@ func (s *Store) LoadLabelRecordByLabelID(labelID string) (LabelRecord, error) {
 	var rec LabelRecord
 	var refundLink sql.NullString
 	err := s.DB.QueryRow(`
-		SELECT id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
+		SELECT id, store_id, shipment_id, tracking_number, invoice_uuid, rate_id, carrier, service_code, service_name, shipping_charges_cents, delivery_date, delivery_days, refund_link, weight, created_at
 		FROM label_records
-		WHERE id = ?
+		WHERE store_id = ? AND id = ?
 		LIMIT 1
-	`, labelID).Scan(
+	`, storeID, labelID).Scan(
 		&rec.ID,
+		&rec.StoreID,
 		&rec.ShipmentID,
 		&rec.TrackingNumber,
 		&rec.InvoiceUUID,

@@ -21,6 +21,7 @@ func main() {
 	log.Println("✅ APP_CLIENT_ID =", cfg.AppClientID)
 	log.Println("✅ REDIRECT_URI  =", cfg.RedirectURI)
 	log.Println("✅ AUTHORIZE_URL =", cfg.AuthorizeURL)
+	log.Println("✅ ADMIN_ORDERS_URL =", cfg.AdminOrdersURL)
 
 	store, err := database.NewStore(cfg)
 	if err != nil {

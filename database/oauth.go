@@ -146,6 +146,10 @@ func (s *Store) CleanupPluginData(storeID int64) error {
 		rollback()
 		return err
 	}
+	if err := deleteStep("delete label_records", "DELETE FROM label_records WHERE store_id = ?", storeID); err != nil {
+		rollback()
+		return err
+	}
 
 	if err := tx.Commit(); err != nil {
 		rollback()

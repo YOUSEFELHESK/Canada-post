@@ -78,6 +78,7 @@ func (s *Server) CreateLabel(
 		snapshot.Shipper.Phone,
 		snapshot.Customer.Phone,
 	)
+	clientID := clientIDFromRequest(ctx, req)
 	requestCurrency := resolveRequestCurrency(ctx, req)
 	if snapshot.CurrencyCode == "" {
 		snapshot.CurrencyCode = requestCurrency
@@ -91,7 +92,6 @@ func (s *Server) CreateLabel(
 				Message: "currency rates store not configured",
 			}, nil
 		}
-		clientID := clientIDFromRequest(ctx, req)
 		if clientID == 0 {
 			return &shippingpluginpb.ResultResponse{
 				Success: false,
@@ -152,7 +152,6 @@ func (s *Server) CreateLabel(
 		logPluginResponse("CreateLabel", resp)
 		return resp, nil
 	}
-	clientID := clientIDFromRequest(ctx, req)
 	options, notification, err := s.buildCreateLabelOptions(customValues, snapshot.RateToCad, clientID, destCountry)
 	if err != nil {
 		resp := &shippingpluginpb.ResultResponse{
@@ -263,6 +262,7 @@ func (s *Server) CreateLabel(
 
 	record := database.LabelRecord{
 		ID:                   labelID,
+		StoreID:              clientID,
 		ShipmentID:           shipment.ShipmentID,
 		TrackingNumber:       tracking,
 		InvoiceUUID:          invoiceUUID,
